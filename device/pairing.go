@@ -42,7 +42,7 @@ func (d *Device) obtainNewCertificate() error {
 		return err
 	}
 
-	cert, err := d.astarteAPIClient.Pairing.ObtainNewMQTTv1CertificateForDevice(d.realm, d.deviceID, d.credentialsSecret, csrString)
+	cert, err := d.astarteAPIClient.Pairing.ObtainNewMQTTv1CertificateForDevice(d.realm, d.deviceID, csrString)
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (d *Device) obtainNewCertificate() error {
 }
 
 func (d *Device) getBrokerURL() (string, error) {
-	info, err := d.astarteAPIClient.Pairing.GetMQTTv1ProtocolInformationForDevice(d.realm, d.deviceID, d.credentialsSecret)
+	info, err := d.astarteAPIClient.Pairing.GetMQTTv1ProtocolInformationForDevice(d.realm, d.deviceID)
 	if err != nil {
 		return "", err
 	}
