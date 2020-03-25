@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"net/url"
 	"time"
 
 	"github.com/astarte-platform/astarte-go/client"
@@ -30,14 +29,12 @@ import (
 
 // Device is the base struct for Astarte Devices
 type Device struct {
-	deviceID          string
-	realm             string
-	credentialsSecret string
-	pairingBaseURL    *url.URL
-	persistencyDir    string
-	m                 mqtt.Client
-	interfaces        map[string]interfaces.AstarteInterface
-	astarteAPIClient  *client.Client
+	deviceID         string
+	realm            string
+	persistencyDir   string
+	m                mqtt.Client
+	interfaces       map[string]interfaces.AstarteInterface
+	astarteAPIClient *client.Client
 	// AutoReconnect sets whether the device should reconnect automatically
 	AutoReconnect bool
 	// RootCAs, when not nil, sets a custom set of Root CAs to trust against the broker
@@ -73,20 +70,15 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 	d := new(Device)
 	d.deviceID = deviceID
 	d.realm = realm
-	d.credentialsSecret = credentialsSecret
 	d.persistencyDir = persistencyDir
 	d.interfaces = map[string]interfaces.AstarteInterface{}
 
 	var err error
-	d.astarteAPIClient, err = client.NewClientWithIndividualURLs("", "", pairingBaseURL, "", nil)
+	d.astarteAPIClient, err = client.NewClientWithIndividualURLs(map[misc.AstarteService]string{misc.Pairing: pairingBaseURL}, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	d.pairingBaseURL, err = url.Parse(pairingBaseURL)
-	if err != nil {
-		return nil, err
-	}
+	d.astarteAPIClient.SetToken(credentialsSecret)
 
 	return d, nil
 }
