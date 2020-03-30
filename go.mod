@@ -3,7 +3,7 @@ module github.com/astarte-platform/astarte-device-sdk-go
 go 1.14
 
 require (
-	github.com/astarte-platform/astarte-go v0.0.0-20200325111501-f4460a6ad5f0
+	github.com/astarte-platform/astarte-go v0.0.0-20200330131150-8579b4d13341
 	github.com/eclipse/paho.mqtt.golang v1.2.0
 	github.com/google/go-cmp v0.3.0 // indirect
 	github.com/stretchr/testify v1.4.0 // indirect

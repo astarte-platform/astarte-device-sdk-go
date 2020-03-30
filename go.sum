@@ -1,6 +1,6 @@
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/astarte-platform/astarte-go v0.0.0-20200325111501-f4460a6ad5f0 h1:SWreefmOXzzhm2fmQH+jycj5f3zcVx8fvWBtVa4g9CY=
-github.com/astarte-platform/astarte-go v0.0.0-20200325111501-f4460a6ad5f0/go.mod h1:qdLuKqljGJ4ncKpidJVUQOwvMi20idQw31Y4cd39yjs=
+github.com/astarte-platform/astarte-go v0.0.0-20200330131150-8579b4d13341 h1:MeWTC7g0s10eLWyQU4hjjqqu1iCcH3cWga0uNFoQgZ8=
+github.com/astarte-platform/astarte-go v0.0.0-20200330131150-8579b4d13341/go.mod h1:qdLuKqljGJ4ncKpidJVUQOwvMi20idQw31Y4cd39yjs=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

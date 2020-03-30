@@ -116,46 +116,23 @@ func (d *Device) initializeMQTTClient(brokerAddress string) error {
 
 // SendIndividualMessageWithTimestamp sends a new message towards an individual aggregation interface,
 // with explicit timestamp
-func (d *Device) SendIndividualMessageWithTimestamp(interfaceName, path string, value interface{}, timestamp time.Time) error {
+func (d *Device) SendIndividualMessageWithTimestamp(interfaceName, interfacePath string, value interface{}, timestamp time.Time) error {
 	// Get the interface from the introspection
-	var qos byte = 2
-	if iface, ok := d.interfaces[interfaceName]; ok {
+	iface, ok := d.interfaces[interfaceName]
+	if ok {
 		if iface.Aggregation != interfaces.IndividualAggregation {
 			return fmt.Errorf("Interface %s hasn't individual aggregation", interfaceName)
 		}
 		// Validate the message
-		if err := interfaces.ValidateIndividualMessage(iface, path, value); err != nil {
+		if err := interfaces.ValidateIndividualMessage(iface, interfacePath, value); err != nil {
 			return err
-		}
-		if iface.Type == interfaces.DatastreamType {
-			// Guaranteed we won't get an error here
-			mapping, _ := interfaces.InterfaceMappingFromPath(iface, path)
-			switch mapping.Reliability {
-			case interfaces.GuaranteedReliability:
-				qos = 1
-			case interfaces.UnreliableReliability:
-				qos = 0
-			}
 		}
 	} else {
 		return fmt.Errorf("Interface %s not registered", interfaceName)
 	}
 
-	// We are good to go. Let's build the message.
-	payload := map[string]interface{}{"v": value}
-	if !timestamp.IsZero() {
-		payload["t"] = timestamp.UTC()
-	}
-	doc, err := bson.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	topic := fmt.Sprintf("%s/%s%s", d.getBaseTopic(), interfaceName, path)
-	// TODO: Handle this token
-	_ = d.m.Publish(topic, qos, false, doc)
-
-	return nil
+	// We are good to go. Let's send the message.
+	return d.sendMqttV1MessageInternal(iface, interfacePath, value, timestamp)
 }
 
 // SendIndividualMessage sends a new message towards an individual aggregation interface
@@ -164,24 +141,54 @@ func (d *Device) SendIndividualMessage(interfaceName, path string, value interfa
 }
 
 // SendAggregateMessageWithTimestamp sends a new message towards an Object Aggregated interface,
-// with explicit timestamp
-func (d *Device) SendAggregateMessageWithTimestamp(interfaceName string, values map[string]interface{}, timestamp time.Time) error {
+// with explicit timestamp. values must be a map containing the last tip of the endpoint, with no
+// slash, as the key, and the corresponding value as value. interfacePath should match the path
+// of the base endpoint, without the last tip.
+// Example: if dealing with an aggregate interface with endpoints [/my/aggregate/firstValue, /my/aggregate/secondValue],
+// interfacePath would be "/my/aggregate", and values would be map["firstValue": <value>, "secondValue": <value>]
+func (d *Device) SendAggregateMessageWithTimestamp(interfaceName, interfacePath string, values map[string]interface{}, timestamp time.Time) error {
 	// Get the interface from the introspection
-	var qos byte = 2
-	if iface, ok := d.interfaces[interfaceName]; ok {
+	iface, ok := d.interfaces[interfaceName]
+	if ok {
 		if iface.Aggregation != interfaces.ObjectAggregation {
-			return fmt.Errorf("Interface %s hasn't object aggregation")
+			return fmt.Errorf("Interface %s hasn't object aggregation", iface.Name)
 		}
 		// Validate the message
-		if err := interfaces.ValidateAggregateMessage(iface, values); err != nil {
+		if err := interfaces.ValidateAggregateMessage(iface, interfacePath, values); err != nil {
 			return err
 		}
 	} else {
 		return fmt.Errorf("Interface %s not registered", interfaceName)
 	}
 
-	// We are good to go. Let's build the message.
-	payload := map[string]interface{}{"v": values}
+	// We are good to go. Let's send the message.
+	return d.sendMqttV1MessageInternal(iface, interfacePath, values, timestamp)
+}
+
+// SendAggregateMessage sends a new message towards an Object Aggregated interface.
+// values must be a map containing the last tip of the endpoint, with no
+// slash, as the key, and the corresponding value as value. interfacePath should match the path
+// of the base endpoint, without the last tip.
+// Example: if dealing with an aggregate interface with endpoints [/my/aggregate/firstValue, /my/aggregate/secondValue],
+// interfacePath would be "/my/aggregate", and values would be map["firstValue": <value>, "secondValue": <value>]
+func (d *Device) SendAggregateMessage(interfaceName, interfacePath string, values map[string]interface{}) error {
+	return d.SendAggregateMessageWithTimestamp(interfaceName, interfacePath, values, time.Time{})
+}
+
+func (d *Device) sendMqttV1MessageInternal(astarteInterface interfaces.AstarteInterface, interfacePath string, values interface{}, timestamp time.Time) error {
+	var qos uint8 = 2
+	if astarteInterface.Type == interfaces.DatastreamType {
+		// Guaranteed we won't get an error here
+		mapping, _ := interfaces.InterfaceMappingFromPath(astarteInterface, interfacePath)
+		switch mapping.Reliability {
+		case interfaces.GuaranteedReliability:
+			qos = 1
+		case interfaces.UnreliableReliability:
+			qos = 0
+		}
+	}
+
+	payload := map[string]interface{}{"v": interfaces.NormalizePayload(values, false)}
 	if !timestamp.IsZero() {
 		payload["t"] = timestamp.UTC()
 	}
@@ -190,16 +197,11 @@ func (d *Device) SendAggregateMessageWithTimestamp(interfaceName string, values 
 		return err
 	}
 
-	topic := fmt.Sprintf("%s/%s", d.getBaseTopic(), interfaceName)
+	topic := fmt.Sprintf("%s/%s%s", d.getBaseTopic(), astarteInterface.Name, interfacePath)
 	// TODO: Handle this token
 	_ = d.m.Publish(topic, qos, false, doc)
 
 	return nil
-}
-
-// SendAggregateMessage sends a new message towards an Object Aggregated interface
-func (d *Device) SendAggregateMessage(interfaceName string, values map[string]interface{}) error {
-	return d.SendAggregateMessageWithTimestamp(interfaceName, values, time.Time{})
 }
 
 func (d *Device) setupSubscriptions() error {
