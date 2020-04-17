@@ -31,6 +31,7 @@ type IndividualMessage struct {
 // AggregateMessage represents a message for an Interface of aggregation type object
 type AggregateMessage struct {
 	Interface interfaces.AstarteInterface
+	Path      string
 	Values    map[string]interface{}
 	Timestamp time.Time
 }

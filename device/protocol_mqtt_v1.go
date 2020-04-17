@@ -84,6 +84,44 @@ func (d *Device) initializeMQTTClient(brokerAddress string) error {
 
 			if iface, ok := d.interfaces[interfaceName]; ok {
 				// Is it individual?
+				switch {
+				case len(tokens) != 4:
+					if d.OnErrors != nil {
+						d.OnErrors(d, fmt.Errorf("could not parse incoming message on topic structure %s", tokens))
+					}
+					return
+				case iface.Aggregation == interfaces.IndividualAggregation:
+					interfacePath := "/" + tokens[3]
+
+					// Create the message
+					m := IndividualMessage{
+						Interface: iface,
+						Path:      interfacePath,
+						Value:     parsed["v"],
+						Timestamp: timestamp,
+					}
+					if d.OnIndividualMessageReceived != nil {
+						d.OnIndividualMessageReceived(d, m)
+					}
+				case iface.Aggregation == interfaces.ObjectAggregation:
+					interfacePath := "/" + tokens[3]
+
+					if val, ok := parsed["v"].(map[string]interface{}); !ok {
+						d.OnErrors(d, fmt.Errorf("could not parse aggregate message payload"))
+					} else {
+						// Create the message
+						m := AggregateMessage{
+							Interface: iface,
+							Path:      interfacePath,
+							Values:    val,
+							Timestamp: timestamp,
+						}
+
+						if d.OnAggregateMessageReceived != nil {
+							d.OnAggregateMessageReceived(d, m)
+						}
+					}
+				}
 				if iface.Aggregation == interfaces.IndividualAggregation && len(tokens) == 4 {
 					interfacePath := "/" + tokens[3]
 
@@ -98,12 +136,9 @@ func (d *Device) initializeMQTTClient(brokerAddress string) error {
 						d.OnIndividualMessageReceived(d, m)
 					}
 				}
-			} else {
+			} else if d.OnErrors != nil {
 				// Something is off.
-				if d.OnErrors != nil {
-					d.OnErrors(d, fmt.Errorf("Received message for unregistered interface %s", interfaceName))
-				}
-				return
+				d.OnErrors(d, fmt.Errorf("Received message for unregistered interface %s", interfaceName))
 			}
 		}
 	})
@@ -208,11 +243,8 @@ func (d *Device) setupSubscriptions() error {
 	subscriptions := map[string]byte{}
 	for _, i := range d.interfaces {
 		if i.Ownership == interfaces.ServerOwnership {
-			if i.Aggregation == interfaces.ObjectAggregation {
-				subscriptions[fmt.Sprintf("%s/%s", d.getBaseTopic(), i.Name)] = 2
-			} else {
-				subscriptions[fmt.Sprintf("%s/%s/#", d.getBaseTopic(), i.Name)] = 2
-			}
+			subscriptions[fmt.Sprintf("%s/%s", d.getBaseTopic(), i.Name)] = 2
+			subscriptions[fmt.Sprintf("%s/%s/#", d.getBaseTopic(), i.Name)] = 2
 		}
 	}
 
