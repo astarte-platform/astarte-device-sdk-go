@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -109,6 +110,20 @@ func (d *Device) initializeMQTTClient(brokerAddress string) error {
 					if val, ok := parsed["v"].(map[string]interface{}); !ok {
 						d.OnErrors(d, fmt.Errorf("could not parse aggregate message payload"))
 					} else {
+						// We have to check whether we have some nested arrays or not in here.
+						for k, v := range val {
+							if bsonArray, ok := v.(primitive.A); ok {
+								// That is, in fact, the case. Convert to a generic Go slice first.
+								bsonArraySlice := []interface{}(bsonArray)
+								// Now reflect the heck out of it and specialize the slice
+								specializedSlice := reflect.MakeSlice(reflect.SliceOf(reflect.TypeOf(bsonArraySlice[0])), len(bsonArraySlice), cap(bsonArraySlice))
+								for i := 0; i < specializedSlice.Len(); i++ {
+									specializedSlice.Index(i).Set(reflect.ValueOf(bsonArraySlice[i]))
+								}
+								val[k] = specializedSlice.Interface()
+							}
+						}
+
 						// Create the message
 						m := AggregateMessage{
 							Interface: iface,
