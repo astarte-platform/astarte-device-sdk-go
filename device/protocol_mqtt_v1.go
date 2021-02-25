@@ -47,6 +47,22 @@ func (d *Device) initializeMQTTClient(brokerAddress string) error {
 	}
 	opts.SetTLSConfig(tlsConfig)
 
+	opts.SetOnConnectHandler(func(client mqtt.Client) {
+		if d.OnConnectionStateChanged != nil {
+			d.OnConnectionStateChanged(d, true)
+		}
+	})
+
+	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
+		if d.OnErrors != nil {
+			d.OnErrors(d, err)
+		}
+
+		if d.OnConnectionStateChanged != nil {
+			d.OnConnectionStateChanged(d, false)
+		}
+	})
+
 	// This is our message handler
 	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
 		if !strings.HasPrefix(msg.Topic(), d.getBaseTopic()) {
