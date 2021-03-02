@@ -60,7 +60,11 @@ func ExecuteBasicDevice() {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
-	d.AddInterface(iface)
+
+	if err = d.AddInterface(iface); err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
 
 	// Set up device options and callbacks
 	d.AutoReconnect = true
