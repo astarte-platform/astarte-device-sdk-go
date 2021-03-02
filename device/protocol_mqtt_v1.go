@@ -153,20 +153,6 @@ func (d *Device) initializeMQTTClient(brokerAddress string) error {
 						}
 					}
 				}
-				if iface.Aggregation == interfaces.IndividualAggregation && len(tokens) == 4 {
-					interfacePath := "/" + tokens[3]
-
-					// Create the message
-					m := IndividualMessage{
-						Interface: iface,
-						Path:      interfacePath,
-						Value:     parsed["v"],
-						Timestamp: timestamp,
-					}
-					if d.OnIndividualMessageReceived != nil {
-						d.OnIndividualMessageReceived(d, m)
-					}
-				}
 			} else if d.OnErrors != nil {
 				// Something is off.
 				d.OnErrors(d, fmt.Errorf("Received message for unregistered interface %s", interfaceName))
