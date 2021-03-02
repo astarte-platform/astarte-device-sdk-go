@@ -15,7 +15,6 @@
 package example
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -57,7 +56,7 @@ func ExecuteBasicDevice() {
 		os.Exit(1)
 	}
 	iface := interfaces.AstarteInterface{}
-	if err := json.Unmarshal(byteValue, &iface); err != nil {
+	if iface, err = interfaces.ParseInterface(byteValue); err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
