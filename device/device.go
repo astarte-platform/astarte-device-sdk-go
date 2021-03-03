@@ -177,9 +177,35 @@ func (d *Device) IsConnected() bool {
 	return false
 }
 
-// AddInterface adds an interface to the device
-func (d *Device) AddInterface(astarteInterface interfaces.AstarteInterface) {
+// AddInterface adds an interface to the device. The interface must be loaded with ParseInterface
+// from the astarte-go/interfaces package.
+// AddInterface returns `nil` if the interface was loaded successfully, or a corresponding error
+// otherwise (e.g. interface validation failed).
+func (d *Device) AddInterface(astarteInterface interfaces.AstarteInterface) error {
+	if err := astarteInterface.Aggregation.IsValid(); err != nil {
+		return err
+	}
+	if err := astarteInterface.Type.IsValid(); err != nil {
+		return err
+	}
+	if err := astarteInterface.Ownership.IsValid(); err != nil {
+		return err
+	}
+
+	for _, mapping := range astarteInterface.Mappings {
+		if err := mapping.Reliability.IsValid(); err != nil {
+			return err
+		}
+		if err := mapping.Retention.IsValid(); err != nil {
+			return err
+		}
+		if err := mapping.DatabaseRetentionPolicy.IsValid(); err != nil {
+			return err
+		}
+	}
+
 	d.interfaces[astarteInterface.Name] = astarteInterface
+	return nil
 }
 
 // RemoveInterface removes an interface from the device
