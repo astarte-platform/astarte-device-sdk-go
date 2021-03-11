@@ -2,6 +2,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/astarte-platform/astarte-go v0.90.1 h1:FP7Uy4Hce0/x1z6gHCypjUCx52R+/OAfZUv0s7qsOts=
 github.com/astarte-platform/astarte-go v0.90.1/go.mod h1:mW8KuuYUMvO91z4HHYpa3e841jZPnp269fuXGl+c8WU=
 github.com/aws/aws-sdk-go v1.34.28/go.mod h1:H7NKnBqNVzoTJpGfLrQkkD+ytBA93eiDYi/+8rV9s48=
+github.com/cenkalti/backoff/v4 v4.1.0 h1:c8LkOFQTzuO0WBM/ae5HdGQuZPfPxp7lqBRwQRm4fSc=
+github.com/cenkalti/backoff/v4 v4.1.0/go.mod h1:scbssz8iZGpm3xbr14ovlUdkxfGXNInqkPWOWmG2CLw=
 github.com/cristalhq/jwt/v3 v3.0.11 h1:oQAo2wlS8O/BUG03yIlDRzBrCwdAOiP52M1QRCk7MzI=
 github.com/cristalhq/jwt/v3 v3.0.11/go.mod h1:XOnIXst8ozq/esy5N1XOlSyQqBd+84fxJ99FK+1jgL8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

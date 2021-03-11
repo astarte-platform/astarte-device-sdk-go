@@ -32,10 +32,10 @@ func (d *Device) getBaseTopic() string {
 	return fmt.Sprintf("%s/%s", d.realm, d.deviceID)
 }
 
-func (d *Device) initializeMQTTClient(brokerAddress string) error {
+func (d *Device) initializeMQTTClient() error {
 	s := mqtt.NewFileStore(filepath.Join(d.persistencyDir, "mqttstore"))
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker(brokerAddress)
+	opts.AddBroker(d.brokerURL)
 	opts.SetAutoReconnect(d.AutoReconnect)
 	opts.SetStore(s)
 	opts.SetClientID(fmt.Sprintf("%s/%s", d.realm, d.deviceID))
@@ -48,6 +48,26 @@ func (d *Device) initializeMQTTClient(brokerAddress string) error {
 	opts.SetTLSConfig(tlsConfig)
 
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
+		if err := d.setupSubscriptions(); err != nil {
+			errorMsg := fmt.Sprintf("Cannot setup subscriptions: %v", err)
+			if d.OnErrors != nil {
+				d.OnErrors(d, errors.New(errorMsg))
+			}
+			d.m.Disconnect(0)
+			fmt.Println(errorMsg)
+			return
+		}
+
+		if err := d.sendIntrospection(); err != nil {
+			errorMsg := fmt.Sprintf("Cannot send introspection: %v", err)
+			if d.OnErrors != nil {
+				d.OnErrors(d, errors.New(errorMsg))
+			}
+			d.m.Disconnect(0)
+			fmt.Println(errorMsg)
+			return
+		}
+
 		if d.OnConnectionStateChanged != nil {
 			d.OnConnectionStateChanged(d, true)
 		}
@@ -160,7 +180,6 @@ func (d *Device) initializeMQTTClient(brokerAddress string) error {
 		}
 	})
 
-	//	opts.SetOnConnectHandler()
 	d.m = mqtt.NewClient(opts)
 
 	return nil

@@ -24,7 +24,12 @@ import (
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
 	"github.com/astarte-platform/astarte-go/misc"
+	backoff "github.com/cenkalti/backoff/v4"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+)
+
+const (
+	DefaultInitialConnectionAttempts = 10
 )
 
 // Device is the base struct for Astarte Devices
@@ -35,8 +40,16 @@ type Device struct {
 	m                mqtt.Client
 	interfaces       map[string]interfaces.AstarteInterface
 	astarteAPIClient *client.Client
-	// AutoReconnect sets whether the device should reconnect automatically
+	brokerURL        string
+	// AutoReconnect sets whether the device should reconnect automatically if it loses the connection
+	// after establishing it. Defaults to false.
 	AutoReconnect bool
+	// ConnectRetry sets whether the device should retry to connect if the first connection
+	// fails. Defaults to false.
+	ConnectRetry bool
+	// MaxRetries sets the number of attempts for the device to establish the first connection.
+	// If ConnectRetry is false, MaxRetries will be ignored. Defaults to 10.
+	MaxRetries int
 	// RootCAs, when not nil, sets a custom set of Root CAs to trust against the broker
 	RootCAs                     *x509.CertPool
 	OnIndividualMessageReceived func(*Device, IndividualMessage)
@@ -102,23 +115,43 @@ func (d *Device) Connect(result chan<- error) {
 			return
 		}
 
-		// First of all, ensure we have a certificate
-		if err := d.ensureCertificate(); err != nil {
-			if result != nil {
-				result <- err
-			}
-			return
+		// Define a retry policy and the operation to be executed, i.e. we want to
+		// retrieve the brokerURL with an HTTP request
+		policy := d.makeRetryPolicy()
+		ensureBrokerURLOperation := func() error {
+			return d.ensureBrokerURL()
 		}
 
-		brokerURL, err := d.getBrokerURL()
+		err := backoff.Retry(ensureBrokerURLOperation, policy)
 		if err != nil {
 			if result != nil {
-				result <- err
+				if d.ConnectRetry {
+					errorMsg := fmt.Sprintf("Cannot establish a connection after %d attempts.", d.connectionRetryAttempts())
+					result <- errors.New(errorMsg)
+				} else {
+					result <- err
+				}
 			}
 			return
 		}
 
-		if err := d.initializeMQTTClient(brokerURL); err != nil {
+		// Ensure we have a certificate
+		policy.Reset()
+		ensureCertificateOperation := func() error {
+			return d.ensureCertificate()
+		}
+
+		err = backoff.Retry(ensureCertificateOperation, policy)
+		if err != nil {
+			if result != nil {
+				errorMsg := fmt.Sprintf("Cannot ensure certificate: %v", err)
+				result <- errors.New(errorMsg)
+			}
+			return
+		}
+
+		// initialize the client
+		if err := d.initializeMQTTClient(); err != nil {
 			if result != nil {
 				result <- err
 			}
@@ -126,30 +159,16 @@ func (d *Device) Connect(result chan<- error) {
 		}
 
 		// Wait for the token - we're in a coroutine anyway
-		connectToken := d.m.Connect()
-		if ok := connectToken.WaitTimeout(30 * time.Second); !ok {
-			if result != nil {
-				result <- errors.New("Timed out while connecting to the Broker")
+		policy.Reset()
+		connectOperation := func() error {
+			connectToken := d.m.Connect()
+			if ok := connectToken.WaitTimeout(30 * time.Second); !ok {
+				return errors.New("Timed out while connecting to the Broker.")
 			}
-			return
+			return nil
 		}
-		if connectToken.Error() != nil {
-			if result != nil {
-				result <- connectToken.Error()
-			}
-			return
-		}
-
-		// If connected successfully, setup subscriptions and send the introspection before notifying
-		if err := d.setupSubscriptions(); err != nil {
-			d.m.Disconnect(0)
-			if result != nil {
-				result <- err
-			}
-			return
-		}
-		if err := d.sendIntrospection(); err != nil {
-			d.m.Disconnect(0)
+		err = backoff.Retry(connectOperation, policy)
+		if err != nil {
 			if result != nil {
 				result <- err
 			}
@@ -161,6 +180,24 @@ func (d *Device) Connect(result chan<- error) {
 			result <- nil
 		}
 	}(result)
+}
+
+func (d *Device) connectionRetryAttempts() int {
+	switch {
+	case d.ConnectRetry && d.MaxRetries > 0:
+		return d.MaxRetries
+	case d.ConnectRetry:
+		return DefaultInitialConnectionAttempts
+	default:
+		return 0
+	}
+}
+
+func (d *Device) makeRetryPolicy() backoff.BackOff {
+	policy := backoff.NewExponentialBackOff()
+	retries := d.connectionRetryAttempts()
+
+	return backoff.WithMaxRetries(policy, uint64(retries))
 }
 
 // Disconnect disconnects the device
