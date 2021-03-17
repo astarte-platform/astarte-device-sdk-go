@@ -68,6 +68,8 @@ func ExecuteBasicDevice() {
 
 	// Set up device options and callbacks
 	d.AutoReconnect = true
+	d.ConnectRetry = true
+	d.MaxRetries = 10
 	d.OnConnectionStateChanged = func(d *device.Device, state bool) {
 		fmt.Printf("Device connection state: %t\n", state)
 	}
