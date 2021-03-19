@@ -50,11 +50,12 @@ func (d *Device) obtainNewCertificate() error {
 	return d.saveCertificateFromString(cert)
 }
 
-func (d *Device) getBrokerURL() (string, error) {
+func (d *Device) ensureBrokerURL() error {
 	info, err := d.astarteAPIClient.Pairing.GetMQTTv1ProtocolInformationForDevice(d.realm, d.deviceID)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	return strings.Replace(info.BrokerURL, "mqtts", "ssl", 1), nil
+	d.brokerURL = strings.Replace(info.BrokerURL, "mqtts", "ssl", 1)
+	return nil
 }
