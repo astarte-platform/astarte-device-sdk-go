@@ -276,10 +276,12 @@ func (d *Device) sendMqttV1MessageInternal(astarteInterface interfaces.AstarteIn
 }
 
 func (d *Device) setupSubscriptions() error {
-	subscriptions := map[string]byte{}
+	// Initialize with control subscriptions
+	subscriptions := map[string]byte{
+		fmt.Sprintf("%s/control/consumer/properties", d.getBaseTopic()): 2,
+	}
 	for _, i := range d.interfaces {
 		if i.Ownership == interfaces.ServerOwnership {
-			subscriptions[fmt.Sprintf("%s/%s", d.getBaseTopic(), i.Name)] = 2
 			subscriptions[fmt.Sprintf("%s/%s/#", d.getBaseTopic(), i.Name)] = 2
 		}
 	}
