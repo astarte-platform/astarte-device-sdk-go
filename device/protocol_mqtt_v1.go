@@ -53,8 +53,9 @@ func (d *Device) initializeMQTTClient() error {
 			if d.OnErrors != nil {
 				d.OnErrors(d, errors.New(errorMsg))
 			}
-			d.m.Disconnect(0)
 			fmt.Println(errorMsg)
+			// If we failed to execute this action it means that we got disconnected,
+			// the reconnection mechanism will take care of that so we just return
 			return
 		}
 
@@ -63,8 +64,9 @@ func (d *Device) initializeMQTTClient() error {
 			if d.OnErrors != nil {
 				d.OnErrors(d, errors.New(errorMsg))
 			}
-			d.m.Disconnect(0)
 			fmt.Println(errorMsg)
+			// If we failed to execute this action it means that we got disconnected,
+			// the reconnection mechanism will take care of that so we just return
 			return
 		}
 
