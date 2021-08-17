@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"time"
 
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
@@ -162,8 +161,8 @@ func (d *Device) Connect(result chan<- error) {
 		policy.Reset()
 		connectOperation := func() error {
 			connectToken := d.m.Connect()
-			if ok := connectToken.WaitTimeout(30 * time.Second); !ok {
-				return errors.New("Timed out while connecting to the Broker.")
+			if connectToken.Wait() && connectToken.Error() != nil {
+				return connectToken.Error()
 			}
 			return nil
 		}

@@ -86,14 +86,11 @@ func ExecuteBasicDevice() {
 	// Connect the device and listen to the connection status channel
 	c := make(chan error)
 	d.Connect(c)
-	select {
-	case err := <-c:
-		if err == nil {
-			fmt.Println("Connected successfully")
-		} else {
-			fmt.Println(err.Error())
-			os.Exit(1)
-		}
+	if err := <-c; err == nil {
+		fmt.Println("Connected successfully")
+	} else {
+		fmt.Println(err.Error())
+		os.Exit(1)
 	}
 
 	// Send a message and finish
