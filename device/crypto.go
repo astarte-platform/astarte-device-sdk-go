@@ -77,6 +77,7 @@ func (d *Device) getTLSConfig() (*tls.Config, error) {
 	tlsConfig := new(tls.Config)
 	tlsConfig.Certificates = []tls.Certificate{cert}
 	tlsConfig.RootCAs = d.RootCAs
+	tlsConfig.InsecureSkipVerify = d.IgnoreSSLErrors
 
 	return tlsConfig, nil
 }
