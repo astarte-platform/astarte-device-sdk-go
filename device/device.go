@@ -19,13 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"path/filepath"
 
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
 	"github.com/astarte-platform/astarte-go/misc"
 	backoff "github.com/cenkalti/backoff/v4"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	_ "github.com/mattn/go-sqlite3"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -46,6 +47,9 @@ type Device struct {
 	messageQueue            chan astarteMessageInfo
 	isSendingStoredMessages bool
 	volatileMessages        []astarteMessageInfo
+	// MaxInflightMessages is the maximum number of messages that can be in publishing channel at any given time
+	// before adding messages becomes blocking. Defaults to 100.
+	MaxInflightMessages int
 	// IgnoreSSLErrors allows the device to ignore client SSL errors during connection.
 	// Useful if you're using the device to connect to a test instance of Astarte with self signed certificates,
 	// it is not recommended to leave this to `true` in production. Defaults to `false`.
@@ -94,6 +98,7 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 	d.realm = realm
 	d.persistencyDir = persistencyDir
 	d.interfaces = map[string]interfaces.AstarteInterface{}
+	d.MaxInflightMessages = 100
 
 	var err error
 	d.astarteAPIClient, err = client.NewClientWithIndividualURLs(map[misc.AstarteService]string{misc.Pairing: pairingBaseURL}, nil)
@@ -102,24 +107,14 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 	}
 	d.astarteAPIClient.SetToken(credentialsSecret)
 
-	// d.db, err = gorm.Open(sqlite.Open(filepath.Join(d.persistencyDir, "db/persistency.db")), &gorm.Config{})
-	// if err != nil {
-	// 	errors.New("database startup failed")
-	// 	return nil, err
-	// }
-
-	//dbpath := filepath.Join(d.getDbDir(), "persistency.db")
-	dbpath := "hello.db"
-	fmt.Println(dbpath)
-	d.db, err = OpenDB(dbpath)
+	dbpath := filepath.Join(d.getDbDir(), "persistency.db")
+	d.db, err = gorm.Open(sqlite.Open(dbpath), &gorm.Config{})
 	if err != nil {
-		errors.New("database startup failed")
-		return nil, err
+		fmt.Println("failed to connect to database")
 	}
 
-	fmt.Println("AAAAAAAa")
-	if err := initializeDb(d); err != nil {
-		errors.New("database initialization failed")
+	if err := d.migrateDb(); err != nil {
+		errors.New("Database migration failed")
 		return nil, err
 	}
 
@@ -205,13 +200,9 @@ func (d *Device) Connect(result chan<- error) {
 			return
 		}
 
-		// TODO set these sizes via config
-		d.volatileMessages = make([]astarteMessageInfo, 0, 100)
-		d.messageQueue = make(chan astarteMessageInfo)
+		// Now that the client is up and running, we can start sending messages
+		d.messageQueue = make(chan astarteMessageInfo, d.MaxInflightMessages)
 		go d.sendLoop()
-		d.isSendingStoredMessages = true
-		// should this be a goroutine?
-		d.retrieveFailedMessages()
 
 		// All good: notify, and our routine is over.
 		if result != nil {

@@ -70,12 +70,12 @@ func (d *Device) initializeMQTTClient() error {
 			return
 		}
 
+		// After introspection is done, we send all persisted messages
+		d.resendFailedMessages()
+
 		if d.OnConnectionStateChanged != nil {
 			d.OnConnectionStateChanged(d, true)
 		}
-		d.isSendingStoredMessages = true
-		// should this be a goroutine?
-		d.retrieveFailedMessages()
 	})
 
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
@@ -135,6 +135,8 @@ func (d *Device) initializeMQTTClient() error {
 				case iface.Aggregation == interfaces.IndividualAggregation:
 					interfacePath := "/" + tokens[3]
 
+					d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+
 					// Create the message
 					m := IndividualMessage{
 						Interface: iface,
@@ -165,6 +167,9 @@ func (d *Device) initializeMQTTClient() error {
 							}
 						}
 
+						// N.B.: properties with object aggregation are not yet supported by Astarte
+						d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+
 						// Create the message
 						m := AggregateMessage{
 							Interface: iface,
@@ -179,6 +184,7 @@ func (d *Device) initializeMQTTClient() error {
 					}
 				}
 			} else if d.OnErrors != nil {
+
 				// Something is off.
 				d.OnErrors(d, fmt.Errorf("Received message for unregistered interface %s", interfaceName))
 			}
@@ -190,8 +196,8 @@ func (d *Device) initializeMQTTClient() error {
 	return nil
 }
 
-// SendIndividualMessageWithTimestamp sends a new message towards an individual aggregation interface,
-// with explicit timestamp
+// SendIndividualMessageWithTimestamp adds to the publishing channel a new message towards an individual aggregation interface,
+// with explicit timestamp. This call can be blocking if the channel is full (see `MaxInflightMessages`).
 func (d *Device) SendIndividualMessageWithTimestamp(interfaceName, interfacePath string, value interface{}, timestamp time.Time) error {
 	// Get the interface from the introspection
 	iface, ok := d.interfaces[interfaceName]
@@ -206,19 +212,21 @@ func (d *Device) SendIndividualMessageWithTimestamp(interfaceName, interfacePath
 	} else {
 		return fmt.Errorf("Interface %s not registered", interfaceName)
 	}
-	// We are good to go. Let's send the message.
+	// We are good to go. Let's add the message to the channel.
 	return d.enqueueMqttV1Message(iface, interfacePath, value, timestamp)
 }
 
-// SendIndividualMessage sends a new message towards an individual aggregation interface
+// SendIndividualMessage adds to the publishing channel a new message towards an individual aggregation interface.
+// This call can be blocking if the channel is full (see `MaxInflightMessages`).
 func (d *Device) SendIndividualMessage(interfaceName, path string, value interface{}) error {
 	return d.SendIndividualMessageWithTimestamp(interfaceName, path, value, time.Time{})
 }
 
-// SendAggregateMessageWithTimestamp sends a new message towards an Object Aggregated interface,
+// SendAggregateMessageWithTimestamp adds to the publishing channel a new message towards an Object Aggregated interface,
 // with explicit timestamp. values must be a map containing the last tip of the endpoint, with no
 // slash, as the key, and the corresponding value as value. interfacePath should match the path
 // of the base endpoint, without the last tip.
+// This call can be blocking if the channel is full (see `MaxInflightMessages`).
 // Example: if dealing with an aggregate interface with endpoints [/my/aggregate/firstValue, /my/aggregate/secondValue],
 // interfacePath would be "/my/aggregate", and values would be map["firstValue": <value>, "secondValue": <value>]
 func (d *Device) SendAggregateMessageWithTimestamp(interfaceName, interfacePath string, values map[string]interface{}, timestamp time.Time) error {
@@ -236,26 +244,29 @@ func (d *Device) SendAggregateMessageWithTimestamp(interfaceName, interfacePath 
 		return fmt.Errorf("Interface %s not registered", interfaceName)
 	}
 
-	// We are good to go. Let's send the message.
+	// We are good to go. Let's add the message to the channel.
 	return d.enqueueMqttV1Message(iface, interfacePath, values, timestamp)
 }
 
-// SendAggregateMessage sends a new message towards an Object Aggregated interface.
+// SendAggregateMessage adds to the publishing channel a new message towards an Object Aggregated interface.
 // values must be a map containing the last tip of the endpoint, with no
 // slash, as the key, and the corresponding value as value. interfacePath should match the path
 // of the base endpoint, without the last tip.
+// This call can be blocking if the channel is full (see `MaxInflightMessages`).
 // Example: if dealing with an aggregate interface with endpoints [/my/aggregate/firstValue, /my/aggregate/secondValue],
 // interfacePath would be "/my/aggregate", and values would be map["firstValue": <value>, "secondValue": <value>]
 func (d *Device) SendAggregateMessage(interfaceName, interfacePath string, values map[string]interface{}) error {
 	return d.SendAggregateMessageWithTimestamp(interfaceName, interfacePath, values, time.Time{})
 }
 
+// The main publishing loop: retrieves messages from the publishing channel and sends them one at a time, in order
 func (d *Device) sendLoop() {
 	for next := range d.messageQueue {
 		d.publishMessage(next)
 	}
 }
 
+// Prepare a MqttV1 message and add it to the publishing channel.  Can be blocking if the channel is full.
 func (d *Device) enqueueMqttV1Message(astarteInterface interfaces.AstarteInterface, interfacePath string, values interface{}, timestamp time.Time) error {
 	var qos uint8 = 2
 	var mapping interfaces.AstarteInterfaceMapping
@@ -268,6 +279,9 @@ func (d *Device) enqueueMqttV1Message(astarteInterface interfaces.AstarteInterfa
 		case interfaces.UnreliableReliability:
 			qos = 0
 		}
+	} else {
+		// always store property messages
+		mapping.Retention = interfaces.StoredRetention
 	}
 
 	payload := map[string]interface{}{"v": interfaces.NormalizePayload(values, false)}
@@ -279,33 +293,41 @@ func (d *Device) enqueueMqttV1Message(astarteInterface interfaces.AstarteInterfa
 		return err
 	}
 
-	topic := fmt.Sprintf("%s/%s%s", d.getBaseTopic(), astarteInterface.Name, interfacePath)
-
-	// if it's a property, we need to set it
-	if astarteInterface.Type == interfaces.PropertiesType {
-		go d.storeProperty(topic, doc, astarteInterface.MajorVersion)
-	}
-
 	if d.isSendingStoredMessages {
 		fmt.Println("Sending previously stored messages with non-discard retention, the current message may be scheduled later")
 	}
-
-	d.messageQueue <- makeAstarteMessageInfo(mapping.Expiry, mapping.Retention, topic, qos, doc)
+	message := makeAstarteMessageInfo(mapping.Expiry, mapping.Retention, astarteInterface.Name, interfacePath, astarteInterface.MajorVersion, qos, doc)
+	d.messageQueue <- message
 
 	return nil
 }
 
 func (d *Device) publishMessage(message astarteMessageInfo) error {
-	t := d.m.Publish(message.Topic, message.Qos, false, message.Payload)
-	_ = t.Wait() // Can also use '<-t.Done()' in releases > 1.2.0
-	if t.Error() != nil {
-		fmt.Printf("Message on %s not delivered %s\n", message.Topic, t.Error().Error())
+	topic := fmt.Sprintf("%s/%s%s", d.getBaseTopic(), message.InterfaceName, message.Path)
+
+	// MQTT client returns `true` to IsConnected()
+	// even if it is actually reconnecting
+	if !d.m.IsConnectionOpen() {
+		fmt.Printf("Message on %s not delivered: MQTT client disconnected\n", topic)
 		d.storeMessage(message)
 	} else {
-		// message delivered, check if we need to remove it from the db
-		if message.Retention == interfaces.StoredRetention && message.StorageId != 0 {
-			d.removeFailedMessage(message.StorageId)
-			// if message.storageId == 0, then the message never was in our db
+		t := d.m.Publish(topic, message.Qos, false, message.Payload)
+		// We wait for either successful delivery or error
+		_ = t.Wait()
+		if t.Error() != nil {
+			fmt.Printf("Message on %s not delivered: %s\n", topic, t.Error().Error())
+			d.storeMessage(message)
+		} else {
+			// message delivered, check if we need to remove it from the db
+			// as messages with volatile retention have already been removed form the volatile queue
+			if message.Retention == string(interfaces.StoredRetention) && message.StorageId != 0 {
+				d.removeFailedMessage(message.StorageId)
+				// if message.storageId == 0, then the message never was in our db
+			}
+			// if it's a property, we need to set it
+			if d.interfaces[message.InterfaceName].Type == interfaces.PropertiesType {
+				go d.storeProperty(message.InterfaceName, message.Path, d.interfaces[message.InterfaceName].MajorVersion, message.Payload)
+			}
 		}
 	}
 
@@ -314,20 +336,21 @@ func (d *Device) publishMessage(message astarteMessageInfo) error {
 
 func (d *Device) storeMessage(message astarteMessageInfo) {
 	switch message.Retention {
-	case interfaces.DiscardRetention:
-		fmt.Errorf("Message on %s failed, discarded because it has discard retention", message.Topic)
+	case string(interfaces.DiscardRetention):
+		fmt.Printf("Message on %s%s failed, discarded because it has discard retention\n", message.InterfaceName, message.Path)
 		return
-	case interfaces.VolatileRetention:
+	case string(interfaces.VolatileRetention):
 		d.volatileMessages = append(d.volatileMessages, message)
-	case interfaces.StoredRetention:
-		d.storeFailedMessage(message.StorageId, message.AbsoluteExpiry, message.Topic, message.Payload, message.Qos)
+	case string(interfaces.StoredRetention):
+		d.storeFailedMessage(message)
 	}
 }
 
-func (d *Device) retrieveFailedMessages() {
+func (d *Device) resendFailedMessages() {
+	d.isSendingStoredMessages = true
 	fmt.Println("Sending old messages with non-discard retention")
-	d.retrieveStoredMessages()
-	d.retrieveVolatileMessages()
+	d.resendStoredMessages()
+	d.resendVolatileMessages()
 	// messages are again accepted
 	d.isSendingStoredMessages = false
 }
@@ -366,6 +389,7 @@ func (d *Device) sendIntrospection() error {
 
 	// Send it to the base topic
 	t := d.m.Publish(d.getBaseTopic(), 2, false, introspection)
+	fmt.Printf("Sending introspection for %s\n", d.getBaseTopic())
 	if !t.WaitTimeout(5 * time.Second) {
 		return errors.New("Timed out while sending introspection")
 	}
