@@ -25,6 +25,8 @@ import (
 	"github.com/astarte-platform/astarte-go/misc"
 	backoff "github.com/cenkalti/backoff/v4"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	_ "github.com/mattn/go-sqlite3"
+	"gorm.io/gorm"
 )
 
 const (
@@ -33,13 +35,17 @@ const (
 
 // Device is the base struct for Astarte Devices
 type Device struct {
-	deviceID         string
-	realm            string
-	persistencyDir   string
-	m                mqtt.Client
-	interfaces       map[string]interfaces.AstarteInterface
-	astarteAPIClient *client.Client
-	brokerURL        string
+	deviceID                string
+	realm                   string
+	persistencyDir          string
+	m                       mqtt.Client
+	interfaces              map[string]interfaces.AstarteInterface
+	astarteAPIClient        *client.Client
+	brokerURL               string
+	db                      *gorm.DB
+	messageQueue            chan astarteMessageInfo
+	isSendingStoredMessages bool
+	volatileMessages        []astarteMessageInfo
 	// IgnoreSSLErrors allows the device to ignore client SSL errors during connection.
 	// Useful if you're using the device to connect to a test instance of Astarte with self signed certificates,
 	// it is not recommended to leave this to `true` in production. Defaults to `false`.
@@ -95,6 +101,27 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 		return nil, err
 	}
 	d.astarteAPIClient.SetToken(credentialsSecret)
+
+	// d.db, err = gorm.Open(sqlite.Open(filepath.Join(d.persistencyDir, "db/persistency.db")), &gorm.Config{})
+	// if err != nil {
+	// 	errors.New("database startup failed")
+	// 	return nil, err
+	// }
+
+	//dbpath := filepath.Join(d.getDbDir(), "persistency.db")
+	dbpath := "hello.db"
+	fmt.Println(dbpath)
+	d.db, err = OpenDB(dbpath)
+	if err != nil {
+		errors.New("database startup failed")
+		return nil, err
+	}
+
+	fmt.Println("AAAAAAAa")
+	if err := initializeDb(d); err != nil {
+		errors.New("database initialization failed")
+		return nil, err
+	}
 
 	return d, nil
 }
@@ -177,6 +204,14 @@ func (d *Device) Connect(result chan<- error) {
 			}
 			return
 		}
+
+		// TODO set these sizes via config
+		d.volatileMessages = make([]astarteMessageInfo, 0, 100)
+		d.messageQueue = make(chan astarteMessageInfo)
+		go d.sendLoop()
+		d.isSendingStoredMessages = true
+		// should this be a goroutine?
+		d.retrieveFailedMessages()
 
 		// All good: notify, and our routine is over.
 		if result != nil {

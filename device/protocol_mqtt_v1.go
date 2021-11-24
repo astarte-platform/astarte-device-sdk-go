@@ -73,6 +73,9 @@ func (d *Device) initializeMQTTClient() error {
 		if d.OnConnectionStateChanged != nil {
 			d.OnConnectionStateChanged(d, true)
 		}
+		d.isSendingStoredMessages = true
+		// should this be a goroutine?
+		d.retrieveFailedMessages()
 	})
 
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
@@ -203,9 +206,8 @@ func (d *Device) SendIndividualMessageWithTimestamp(interfaceName, interfacePath
 	} else {
 		return fmt.Errorf("Interface %s not registered", interfaceName)
 	}
-
 	// We are good to go. Let's send the message.
-	return d.sendMqttV1MessageInternal(iface, interfacePath, value, timestamp)
+	return d.enqueueMqttV1Message(iface, interfacePath, value, timestamp)
 }
 
 // SendIndividualMessage sends a new message towards an individual aggregation interface
@@ -235,7 +237,7 @@ func (d *Device) SendAggregateMessageWithTimestamp(interfaceName, interfacePath 
 	}
 
 	// We are good to go. Let's send the message.
-	return d.sendMqttV1MessageInternal(iface, interfacePath, values, timestamp)
+	return d.enqueueMqttV1Message(iface, interfacePath, values, timestamp)
 }
 
 // SendAggregateMessage sends a new message towards an Object Aggregated interface.
@@ -248,11 +250,18 @@ func (d *Device) SendAggregateMessage(interfaceName, interfacePath string, value
 	return d.SendAggregateMessageWithTimestamp(interfaceName, interfacePath, values, time.Time{})
 }
 
-func (d *Device) sendMqttV1MessageInternal(astarteInterface interfaces.AstarteInterface, interfacePath string, values interface{}, timestamp time.Time) error {
+func (d *Device) sendLoop() {
+	for next := range d.messageQueue {
+		d.publishMessage(next)
+	}
+}
+
+func (d *Device) enqueueMqttV1Message(astarteInterface interfaces.AstarteInterface, interfacePath string, values interface{}, timestamp time.Time) error {
 	var qos uint8 = 2
+	var mapping interfaces.AstarteInterfaceMapping
 	if astarteInterface.Type == interfaces.DatastreamType {
 		// Guaranteed we won't get an error here
-		mapping, _ := interfaces.InterfaceMappingFromPath(astarteInterface, interfacePath)
+		mapping, _ = interfaces.InterfaceMappingFromPath(astarteInterface, interfacePath)
 		switch mapping.Reliability {
 		case interfaces.GuaranteedReliability:
 			qos = 1
@@ -271,10 +280,56 @@ func (d *Device) sendMqttV1MessageInternal(astarteInterface interfaces.AstarteIn
 	}
 
 	topic := fmt.Sprintf("%s/%s%s", d.getBaseTopic(), astarteInterface.Name, interfacePath)
-	// TODO: Handle this token
-	_ = d.m.Publish(topic, qos, false, doc)
+
+	// if it's a property, we need to set it
+	if astarteInterface.Type == interfaces.PropertiesType {
+		go d.storeProperty(topic, doc, astarteInterface.MajorVersion)
+	}
+
+	if d.isSendingStoredMessages {
+		fmt.Println("Sending previously stored messages with non-discard retention, the current message may be scheduled later")
+	}
+
+	d.messageQueue <- makeAstarteMessageInfo(mapping.Expiry, mapping.Retention, topic, qos, doc)
 
 	return nil
+}
+
+func (d *Device) publishMessage(message astarteMessageInfo) error {
+	t := d.m.Publish(message.Topic, message.Qos, false, message.Payload)
+	_ = t.Wait() // Can also use '<-t.Done()' in releases > 1.2.0
+	if t.Error() != nil {
+		fmt.Printf("Message on %s not delivered %s\n", message.Topic, t.Error().Error())
+		d.storeMessage(message)
+	} else {
+		// message delivered, check if we need to remove it from the db
+		if message.Retention == interfaces.StoredRetention && message.StorageId != 0 {
+			d.removeFailedMessage(message.StorageId)
+			// if message.storageId == 0, then the message never was in our db
+		}
+	}
+
+	return nil
+}
+
+func (d *Device) storeMessage(message astarteMessageInfo) {
+	switch message.Retention {
+	case interfaces.DiscardRetention:
+		fmt.Errorf("Message on %s failed, discarded because it has discard retention", message.Topic)
+		return
+	case interfaces.VolatileRetention:
+		d.volatileMessages = append(d.volatileMessages, message)
+	case interfaces.StoredRetention:
+		d.storeFailedMessage(message.StorageId, message.AbsoluteExpiry, message.Topic, message.Payload, message.Qos)
+	}
+}
+
+func (d *Device) retrieveFailedMessages() {
+	fmt.Println("Sending old messages with non-discard retention")
+	d.retrieveStoredMessages()
+	d.retrieveVolatileMessages()
+	// messages are again accepted
+	d.isSendingStoredMessages = false
 }
 
 func (d *Device) setupSubscriptions() error {
