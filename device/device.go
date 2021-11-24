@@ -40,6 +40,10 @@ type Device struct {
 	interfaces       map[string]interfaces.AstarteInterface
 	astarteAPIClient *client.Client
 	brokerURL        string
+	// IgnoreSSLErrors allows the device to ignore client SSL errors during connection.
+	// Useful if you're using the device to connect to a test instance of Astarte with self signed certificates,
+	// it is not recommended to leave this to `true` in production. Defaults to `false`.
+	IgnoreSSLErrors bool
 	// AutoReconnect sets whether the device should reconnect automatically if it loses the connection
 	// after establishing it. Defaults to false.
 	AutoReconnect bool
