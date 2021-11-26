@@ -128,5 +128,15 @@ func (d *Device) deleteProperty(interfaceName string, path string, interfaceMajo
 func (d *Device) retrieveDeviceProperties() []property {
 	var properties []property
 	d.db.Find(&properties)
-	return properties
+	upToDate := []property{}
+	for _, property := range properties {
+		if !d.isOutdated(property.InterfaceName, property.InterfaceMajor) {
+			// do not send an outdated property
+			// we can safely assume that properties is not a big collection
+			upToDate = append(upToDate, property)
+
+		}
+		// TODO: cleanup outdated properties
+	}
+	return upToDate
 }

@@ -40,6 +40,7 @@ func (d *Device) initializeMQTTClient() error {
 	opts.SetStore(s)
 	opts.SetClientID(fmt.Sprintf("%s/%s", d.realm, d.deviceID))
 	opts.SetConnectTimeout(30 * time.Second)
+	opts.SetCleanSession(false)
 
 	tlsConfig, err := d.getTLSConfig()
 	if err != nil {
@@ -48,34 +49,7 @@ func (d *Device) initializeMQTTClient() error {
 	opts.SetTLSConfig(tlsConfig)
 
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
-		if err := d.setupSubscriptions(); err != nil {
-			errorMsg := fmt.Sprintf("Cannot setup subscriptions: %v", err)
-			if d.OnErrors != nil {
-				d.OnErrors(d, errors.New(errorMsg))
-			}
-			fmt.Println(errorMsg)
-			// If we failed to execute this action it means that we got disconnected,
-			// the reconnection mechanism will take care of that so we just return
-			return
-		}
-
-		if err := d.sendIntrospection(); err != nil {
-			errorMsg := fmt.Sprintf("Cannot send introspection: %v", err)
-			if d.OnErrors != nil {
-				d.OnErrors(d, errors.New(errorMsg))
-			}
-			fmt.Println(errorMsg)
-			// If we failed to execute this action it means that we got disconnected,
-			// the reconnection mechanism will take care of that so we just return
-			return
-		}
-
-		// After introspection is done, we send all persisted messages
-		d.resendFailedMessages()
-
-		if d.OnConnectionStateChanged != nil {
-			d.OnConnectionStateChanged(d, true)
-		}
+		astarteOnConnectHandler(d, client)
 	})
 
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
@@ -194,6 +168,70 @@ func (d *Device) initializeMQTTClient() error {
 	d.m = mqtt.NewClient(opts)
 
 	return nil
+}
+
+func astarteOnConnectHandler(d *Device, client mqtt.Client) {
+	// Should we run the whole Astarte after connect thing?
+	if !d.sessionPresent {
+		// Yes, we should: first, setup subscription
+		if err := d.setupSubscriptions(); err != nil {
+			errorMsg := fmt.Sprintf("Cannot setup subscriptions: %v", err)
+			if d.OnErrors != nil {
+				d.OnErrors(d, errors.New(errorMsg))
+			}
+			fmt.Println(errorMsg)
+			// If we failed to execute this action it means that we got disconnected,
+			// the reconnection mechanism will take care of that so we just return
+			return
+		}
+		// Then introspection
+		if err := d.sendIntrospection(); err != nil {
+			errorMsg := fmt.Sprintf("Cannot send introspection: %v", err)
+			if d.OnErrors != nil {
+
+				d.OnErrors(d, errors.New(errorMsg))
+			}
+			fmt.Println(errorMsg)
+			// If we failed to execute this action it means that we got disconnected,
+			// the reconnection mechanism will take care of that so we just return
+			return
+		}
+		// Empty cache and
+		if err := d.sendEmptyCache(); err != nil {
+			errorMsg := fmt.Sprintf("Cannot send empty cache: %v", err)
+			if d.OnErrors != nil {
+				d.OnErrors(d, errors.New(errorMsg))
+			}
+			fmt.Println(errorMsg)
+			// If we failed to execute this action it means that we got disconnected,
+			// the reconnection mechanism will take care of that so we just return
+			return
+		}
+
+		// Finally, resend all properties
+		if err := d.sendDeviceProperties(); err != nil {
+			errorMsg := fmt.Sprintf("Cannot send device properties: %v", err)
+			if d.OnErrors != nil {
+				d.OnErrors(d, errors.New(errorMsg))
+			}
+			fmt.Println(errorMsg)
+			// If we failed to execute this action it means that we got disconnected,
+			// the reconnection mechanism will take care of that so we just return
+			return
+		}
+	}
+
+	// If a device connected for the first time, since we do not ask
+	// for a clean session and do not change its clientID, we can assume
+	// that after connection a session is present
+	d.sessionPresent = true
+
+	// If some messages must be retried, do so
+	d.resendFailedMessages()
+
+	if d.OnConnectionStateChanged != nil {
+		d.OnConnectionStateChanged(d, true)
+	}
 }
 
 // SendIndividualMessageWithTimestamp adds to the publishing channel a new message towards an individual aggregation interface,
@@ -394,6 +432,38 @@ func (d *Device) sendIntrospection() error {
 		return errors.New("Timed out while sending introspection")
 	}
 	return t.Error()
+}
+
+func (d *Device) sendEmptyCache() error {
+	// Set up empty cache
+	emptyCacheTopic := fmt.Sprintf("%s/control/emptyCache", d.getBaseTopic())
+
+	// Send it
+	t := d.m.Publish(emptyCacheTopic, 2, false, "1")
+	fmt.Printf("Sending empty cache for %s\n", d.getBaseTopic())
+	if !t.WaitTimeout(5 * time.Second) {
+		return errors.New("Timed out while sending empty cache")
+	}
+	return t.Error()
+}
+
+func (d *Device) sendDeviceProperties() error {
+	properties := d.retrieveDeviceProperties()
+	// Check if property is device-owned
+	for _, property := range properties {
+		if d.interfaces[property.InterfaceName].Ownership == interfaces.DeviceOwnership {
+			// if so, set up publish
+			topic := fmt.Sprintf("%s/%s/%s", d.getBaseTopic(), property.InterfaceName, property.Path)
+			// And just DO IT
+			t := d.m.Publish(topic, 2, false, property.RawValue)
+			fmt.Printf("Sending device property %s\n", topic)
+			if !t.WaitTimeout(5 * time.Second) {
+				return errors.New("Timed out while sending device property")
+			}
+			return t.Error()
+		}
+	}
+	return nil
 }
 
 func bsonRawValueToInterface(v bson.RawValue, valueType string) (interface{}, error) {
