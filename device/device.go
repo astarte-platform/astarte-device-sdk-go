@@ -19,12 +19,15 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"path/filepath"
 
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
 	"github.com/astarte-platform/astarte-go/misc"
 	backoff "github.com/cenkalti/backoff/v4"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 const (
@@ -33,13 +36,20 @@ const (
 
 // Device is the base struct for Astarte Devices
 type Device struct {
-	deviceID         string
-	realm            string
-	persistencyDir   string
-	m                mqtt.Client
-	interfaces       map[string]interfaces.AstarteInterface
-	astarteAPIClient *client.Client
-	brokerURL        string
+	deviceID                string
+	realm                   string
+	persistencyDir          string
+	m                       mqtt.Client
+	interfaces              map[string]interfaces.AstarteInterface
+	astarteAPIClient        *client.Client
+	brokerURL               string
+	db                      *gorm.DB
+	messageQueue            chan astarteMessageInfo
+	isSendingStoredMessages bool
+	volatileMessages        []astarteMessageInfo
+	// MaxInflightMessages is the maximum number of messages that can be in publishing channel at any given time
+	// before adding messages becomes blocking. Defaults to 100.
+	MaxInflightMessages int
 	// IgnoreSSLErrors allows the device to ignore client SSL errors during connection.
 	// Useful if you're using the device to connect to a test instance of Astarte with self signed certificates,
 	// it is not recommended to leave this to `true` in production. Defaults to `false`.
@@ -88,6 +98,7 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 	d.realm = realm
 	d.persistencyDir = persistencyDir
 	d.interfaces = map[string]interfaces.AstarteInterface{}
+	d.MaxInflightMessages = 100
 
 	var err error
 	d.astarteAPIClient, err = client.NewClientWithIndividualURLs(map[misc.AstarteService]string{misc.Pairing: pairingBaseURL}, nil)
@@ -95,6 +106,17 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 		return nil, err
 	}
 	d.astarteAPIClient.SetToken(credentialsSecret)
+
+	dbpath := filepath.Join(d.getDbDir(), "persistency.db")
+	d.db, err = gorm.Open(sqlite.Open(dbpath), &gorm.Config{})
+	if err != nil {
+		fmt.Println("failed to connect to database")
+	}
+
+	if err := d.migrateDb(); err != nil {
+		errors.New("Database migration failed")
+		return nil, err
+	}
 
 	return d, nil
 }
@@ -177,6 +199,10 @@ func (d *Device) Connect(result chan<- error) {
 			}
 			return
 		}
+
+		// Now that the client is up and running, we can start sending messages
+		d.messageQueue = make(chan astarteMessageInfo, d.MaxInflightMessages)
+		go d.sendLoop()
 
 		// All good: notify, and our routine is over.
 		if result != nil {
