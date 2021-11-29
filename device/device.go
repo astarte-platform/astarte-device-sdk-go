@@ -81,15 +81,29 @@ func NewDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string)
 		return nil, err
 	}
 
-	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, persistencyDir)
+	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, persistencyDir, false, nil)
 }
 
-// NewDeviceWithPersistency creates a new Device with a known persistency directory
+// NewDeviceWithPersistency creates a new Device with a known persistency directory and an SQLite database
+// which will be created and stored within that directory. Please note that when creating a device like this,
+// you must have had CGO enabled when compiling your executable due to SQLite requirements.
+// Not using a Database is not recommended, but you can do so by creating your device using NewDeviceWithPersistencyAndDatabase.
 func NewDeviceWithPersistency(deviceID, realm, credentialsSecret string, pairingBaseURL string, persistencyDir string) (*Device, error) {
-	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, persistencyDir)
+	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, persistencyDir, true, nil)
 }
 
-func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string, persistencyDir string) (*Device, error) {
+// NewDeviceWithPersistencyAndDatabase creates a new Device with a known persistency directory and a Database
+// of the user's choice. If db is nil, no database will be used. Otherwise, any valid and open gorm Database
+// will be used. If you are unsure about this option and want to use a Database, stick to NewDeviceWithPersistency.
+// Otherwise, ensure you're passing a dedicated DB to the SDK which can be used exclusively by the Astarte SDK
+// to prevent naming conflicts.
+// Not using a database when you can rely on persistency is strongly discouraged - however, there might be cases in
+// which such a thing is needed, for example if you could not use CGO when compiling your executable.
+func NewDeviceWithPersistencyAndDatabase(deviceID, realm, credentialsSecret string, pairingBaseURL string, persistencyDir string, db *gorm.DB) (*Device, error) {
+	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, persistencyDir, false, db)
+}
+
+func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string, persistencyDir string, defaultDB bool, db *gorm.DB) (*Device, error) {
 	if !misc.IsValidAstarteDeviceID(deviceID) {
 		return nil, fmt.Errorf("%s is not a valid Device ID", deviceID)
 	}
@@ -108,12 +122,18 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 	}
 	d.astarteAPIClient.SetToken(credentialsSecret)
 
-	dbpath := filepath.Join(d.getDbDir(), "persistency.db")
-	d.db, err = gorm.Open(sqlite.Open(dbpath), &gorm.Config{})
-	if err != nil {
-		fmt.Println("failed to connect to database")
+	// If a default database was requested, manage the default SQLite DB
+	if defaultDB {
+		dbpath := filepath.Join(d.getDefaultDbDir(), "persistency.db")
+		d.db, err = gorm.Open(sqlite.Open(dbpath), &gorm.Config{})
+		if err != nil {
+			fmt.Println("failed to load default database")
+		}
+	} else {
+		d.db = db
 	}
 
+	// migrateDb, like all DB functions, will just blink if no DB is available
 	if err := d.migrateDb(); err != nil {
 		errors.New("Database migration failed")
 		return nil, err

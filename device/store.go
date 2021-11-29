@@ -47,7 +47,7 @@ type property struct {
 	RawValue       []byte `gorm:"not null"`
 }
 
-func (d *Device) getDbDir() string {
+func (d *Device) getDefaultDbDir() string {
 	dbDir := filepath.Join(d.persistencyDir, "db")
 	os.MkdirAll(dbDir, 0700)
 	return dbDir
@@ -242,6 +242,10 @@ func (d *Device) handlePurgeProperties(payload []byte) error {
 }
 
 func (d *Device) retrieveDevicePropertiesFromStorage() []property {
+	if d.db == nil {
+		return []property{}
+	}
+
 	var properties []property
 	d.db.Find(&properties)
 	upToDate := []property{}
