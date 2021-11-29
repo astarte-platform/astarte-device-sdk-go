@@ -49,6 +49,10 @@ func (d *Device) getDbDir() string {
 }
 
 func (d *Device) migrateDb() error {
+	if d.db == nil {
+		// Nothing to do
+		return nil
+	}
 	if err := d.db.AutoMigrate(&astarteMessageInfo{}, &property{}); err != nil {
 		return fmt.Errorf("error in database migration: %s", err.Error())
 	}
@@ -64,44 +68,63 @@ func makeAstarteMessageInfo(expiry int, retention interfaces.AstarteMappingReten
 }
 
 func (d *Device) storeFailedMessage(message astarteMessageInfo) {
-	// Gorm creates a (autoincrementing) StorageId for us if it is 0: thank you gorm!
-	d.db.Create(&message)
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
+	// If the StorageId is != 0, then the message was already stored, no point in failing a transaction
+	if message.StorageId == 0 {
+		// Gorm creates a (autoincrementing) StorageId for us if it is 0: thank you gorm!
+		d.db.Create(&message)
+	}
 }
 
-func (d *Device) removeFailedMessage(storageId int) {
+func (d *Device) removeFailedMessageFromStorage(storageId int) {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
 	d.db.Delete(&astarteMessageInfo{}, storageId)
 }
 
 func (d *Device) resendStoredMessages() {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
 	var messages []astarteMessageInfo
 	d.db.Find(&messages)
 	for _, message := range messages {
-		if !isExpired(message) && !d.isOutdated(message.InterfaceName, message.InterfaceMajor) {
+		if !isStoredMessageExpired(message) && !d.isInterfaceOutdatedInIntrospection(message.InterfaceName, message.InterfaceMajor) {
 			// if the message is not expired, try resending it
 			d.messageQueue <- message
 		} else {
 			// else, it can be removed
-			d.removeFailedMessage(message.StorageId)
+			d.removeFailedMessageFromStorage(message.StorageId)
 		}
 	}
 }
 
 func (d *Device) resendVolatileMessages() {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
 	for len(d.volatileMessages) > 0 {
 		message := d.volatileMessages[0]
 		d.volatileMessages = d.volatileMessages[1:]
 		// try resending the message only if it is not expired
-		if !isExpired(message) && !d.isOutdated(message.InterfaceName, message.InterfaceMajor) {
+		if !isStoredMessageExpired(message) && !d.isInterfaceOutdatedInIntrospection(message.InterfaceName, message.InterfaceMajor) {
 			d.messageQueue <- message
 		}
 	}
 }
 
-func isExpired(message astarteMessageInfo) bool {
+func isStoredMessageExpired(message astarteMessageInfo) bool {
 	return message.AbsoluteExpiry <= time.Now().Unix() && message.AbsoluteExpiry != 0
 }
 
-func (d *Device) isOutdated(interfaceName string, interfaceMajor int) bool {
+func (d *Device) isInterfaceOutdatedInIntrospection(interfaceName string, interfaceMajor int) bool {
 	for _, astarteInterface := range d.interfaces {
 		if astarteInterface.Name == interfaceName {
 			if astarteInterface.MajorVersion != interfaceMajor {
@@ -116,21 +139,44 @@ func (d *Device) isOutdated(interfaceName string, interfaceMajor int) bool {
 }
 
 func (d *Device) storeProperty(interfaceName string, path string, interfaceMajor int, value []byte) {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
 	d.db.Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&property{InterfaceName: interfaceName, Path: path, InterfaceMajor: interfaceMajor, RawValue: value})
 }
 
-func (d *Device) deleteProperty(interfaceName string, path string, interfaceMajor int) {
-	d.db.Delete(&interfaceName, &path, &interfaceMajor)
+func (d *Device) removePropertyFromStorage(interfaceName, path string, interfaceMajor int) {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
+	d.db.Where(&property{InterfaceName: interfaceName, Path: path, InterfaceMajor: interfaceMajor}).Delete(&property{})
 }
 
-func (d *Device) retrieveDeviceProperties() []property {
+func (d *Device) removeAllServerOwnedPropertiesFromStorage() {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
+
+	// Find all server owned interfaces currently in our introspection and storage
+	for _, astarteInterface := range d.interfaces {
+		if astarteInterface.Ownership == interfaces.ServerOwnership {
+			// Delete anything pertaining to this interface
+			d.db.Where(&property{InterfaceName: astarteInterface.Name}).Delete(&property{})
+		}
+	}
+}
+
+func (d *Device) retrieveDevicePropertiesFromStorage() []property {
 	var properties []property
 	d.db.Find(&properties)
 	upToDate := []property{}
 	for _, property := range properties {
-		if !d.isOutdated(property.InterfaceName, property.InterfaceMajor) {
+		if !d.isInterfaceOutdatedInIntrospection(property.InterfaceName, property.InterfaceMajor) {
 			// do not send an outdated property
 			// we can safely assume that properties is not a big collection
 			upToDate = append(upToDate, property)

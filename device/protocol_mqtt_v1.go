@@ -359,12 +359,16 @@ func (d *Device) publishMessage(message astarteMessageInfo) error {
 			// message delivered, check if we need to remove it from the db
 			// as messages with volatile retention have already been removed form the volatile queue
 			if message.Retention == string(interfaces.StoredRetention) && message.StorageId != 0 {
-				d.removeFailedMessage(message.StorageId)
+				d.removeFailedMessageFromStorage(message.StorageId)
 				// if message.storageId == 0, then the message never was in our db
 			}
-			// if it's a property, we need to set it
+			// if it's a property, we need to set it or delete it
 			if d.interfaces[message.InterfaceName].Type == interfaces.PropertiesType {
-				go d.storeProperty(message.InterfaceName, message.Path, d.interfaces[message.InterfaceName].MajorVersion, message.Payload)
+				if len(message.Payload) > 0 {
+					go d.storeProperty(message.InterfaceName, message.Path, d.interfaces[message.InterfaceName].MajorVersion, message.Payload)
+				} else {
+					go d.removePropertyFromStorage(message.InterfaceName, message.Path, message.InterfaceMajor)
+				}
 			}
 		}
 	}
@@ -438,6 +442,9 @@ func (d *Device) sendEmptyCache() error {
 	// Set up empty cache
 	emptyCacheTopic := fmt.Sprintf("%s/control/emptyCache", d.getBaseTopic())
 
+	// Erase our server-owned properties in the storage (we want a fresh start)
+	d.removeAllServerOwnedPropertiesFromStorage()
+
 	// Send it
 	t := d.m.Publish(emptyCacheTopic, 2, false, "1")
 	fmt.Printf("Sending empty cache for %s\n", d.getBaseTopic())
@@ -448,7 +455,7 @@ func (d *Device) sendEmptyCache() error {
 }
 
 func (d *Device) sendDeviceProperties() error {
-	properties := d.retrieveDeviceProperties()
+	properties := d.retrieveDevicePropertiesFromStorage()
 	// Check if property is device-owned
 	for _, property := range properties {
 		if d.interfaces[property.InterfaceName].Ownership == interfaces.DeviceOwnership {
