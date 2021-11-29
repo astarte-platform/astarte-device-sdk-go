@@ -15,6 +15,7 @@
 package device
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -185,4 +186,87 @@ func (d *Device) retrieveDevicePropertiesFromStorage() []property {
 		// TODO: cleanup outdated properties
 	}
 	return upToDate
+}
+
+func valueFromBSONPayload(payload []byte) (interface{}, error) {
+	parsed, err := parseBSONPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	v, ok := parsed["v"]
+	if !ok {
+		return nil, errors.New("malformed property")
+	}
+
+	return v, nil
+}
+
+// GetProperty retrieves a property from the local storage, if any. It returns nil and an error in case
+// no storage is available or if the property wasn't found in the local storage or if any other error
+// occurred while handling it, otherwise it returns the property's value.
+func (d *Device) GetProperty(interfaceName, interfacePath string) (interface{}, error) {
+	if d.db == nil {
+		return nil, errors.New("no db available")
+	}
+
+	var p property
+	result := d.db.Where(&property{InterfaceName: interfaceName, Path: interfacePath}).First(&p)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return valueFromBSONPayload(p.RawValue)
+}
+
+// GetAllPropertiesForInterface retrieves all available and stored properties from the local storage, if any,
+// for a given interface. It returns an empty map and an error in case no storage is available, if no properties were found
+// or if any error happened while handling them, otherwise it returns a map containing all stored paths and their
+// respective values.
+func (d *Device) GetAllPropertiesForInterface(interfaceName string) (map[string]interface{}, error) {
+	if d.db == nil {
+		return map[string]interface{}{}, errors.New("no db available")
+	}
+
+	var properties []property
+	result := d.db.Where(&property{InterfaceName: interfaceName}).Find(&properties)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	props := map[string]interface{}{}
+	for _, p := range properties {
+		if v, err := valueFromBSONPayload(p.RawValue); err != nil {
+			return props, err
+		} else {
+			props[p.Path] = v
+		}
+	}
+
+	return props, nil
+}
+
+// GetAllProperties retrieves all available and stored properties from the local storage, if any.
+// It returns an empty map and an error in case no storage is available or if any error happened while retrieving
+// the properties, otherwise it returns a multi-dimensional map containing all the available interfaces, and for
+// each interface all its available paths with their respective values.
+func (d *Device) GetAllProperties() (map[string]map[string]interface{}, error) {
+	if d.db == nil {
+		return map[string]map[string]interface{}{}, errors.New("no db available")
+	}
+
+	props := map[string]map[string]interface{}{}
+	for _, p := range d.retrieveDevicePropertiesFromStorage() {
+		if v, err := valueFromBSONPayload(p.RawValue); err != nil {
+			return props, err
+		} else {
+			if _, ok := props[p.InterfaceName]; !ok {
+				// Create the inner map
+				props[p.InterfaceName] = map[string]interface{}{}
+			}
+			props[p.InterfaceName][p.Path] = v
+		}
+	}
+
+	return props, nil
 }
