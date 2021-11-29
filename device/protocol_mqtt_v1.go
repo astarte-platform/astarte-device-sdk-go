@@ -83,8 +83,8 @@ func (d *Device) initializeMQTTClient() error {
 			// It's a data message. Grab the interface name.
 			interfaceName := tokens[2]
 			// Parse the payload
-			parsed := map[string]interface{}{}
-			if err := bson.Unmarshal(msg.Payload(), parsed); err != nil {
+			parsed, err := parseBSONPayload(msg.Payload())
+			if err != nil {
 				if d.OnErrors != nil {
 					d.OnErrors(d, err)
 				}
@@ -297,6 +297,57 @@ func (d *Device) SendAggregateMessage(interfaceName, interfacePath string, value
 	return d.SendAggregateMessageWithTimestamp(interfaceName, interfacePath, values, time.Time{})
 }
 
+// SetProperty sets a  property in Astarte. It adds to the publishing channel a property set
+// message that is equivalent to `SendIndividualMessage` in every regard, except this call will fail
+// if the interface isn't a property interface. It is advised to use this call, as APIs might change in
+// the future. Once the property is set, it is also added to the local cache and can be retrieved at any time
+// using `GetProperty` or `GetAllProperties`.
+// This call can be blocking if the channel is full (see `MaxInflightMessages`).
+func (d *Device) SetProperty(interfaceName, path string, value interface{}) error {
+	// Get the interface from the introspection
+	iface, ok := d.interfaces[interfaceName]
+	if ok {
+		if iface.Type != interfaces.PropertiesType {
+			return fmt.Errorf("SetProperty can be used only on Property Interfaces", interfaceName)
+		}
+		// Validate the message
+		if err := interfaces.ValidateIndividualMessage(iface, path, value); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("Interface %s not registered", interfaceName)
+	}
+	// We are good to go. Let's add the message to the channel.
+	return d.enqueueMqttV1Message(iface, path, value, time.Time{})
+}
+
+// UnsetProperty deletes an existing property from Astarte, if the property can be unset. It adds to the publishing
+// channel a property deletion message that contains the interface name and the path to be deleted. Once the property
+// is deleted, it is also removed from the local cache.
+// This call can be blocking if the channel is full (see `MaxInflightMessages`).
+func (d *Device) UnsetProperty(interfaceName, path string) error {
+	// Get the interface from the introspection
+	iface, ok := d.interfaces[interfaceName]
+	if ok {
+		if iface.Type != interfaces.PropertiesType {
+			return fmt.Errorf("UnsetProperty can be used only on Property Interfaces", interfaceName)
+		}
+		// Validate the path and whether it can allow unset
+		mapping, err := interfaces.InterfaceMappingFromPath(iface, path)
+		if err != nil {
+			return err
+		}
+		if !mapping.AllowUnset {
+			return errors.New("unset can be called only on properties with allowUnset")
+		}
+	} else {
+		return fmt.Errorf("Interface %s not registered", interfaceName)
+	}
+	// We are good to go. Let's add the message to the channel.
+	// This is a delete property, so a special message: empty payload
+	return d.enqueueRawMqttV1Message(iface, path, []byte{})
+}
+
 // The main publishing loop: retrieves messages from the publishing channel and sends them one at a time, in order
 func (d *Device) sendLoop() {
 	for next := range d.messageQueue {
@@ -306,8 +357,25 @@ func (d *Device) sendLoop() {
 
 // Prepare a MqttV1 message and add it to the publishing channel.  Can be blocking if the channel is full.
 func (d *Device) enqueueMqttV1Message(astarteInterface interfaces.AstarteInterface, interfacePath string, values interface{}, timestamp time.Time) error {
+	payload := map[string]interface{}{"v": interfaces.NormalizePayload(values, false)}
+	if !timestamp.IsZero() {
+		payload["t"] = timestamp.UTC()
+	}
+	doc, err := bson.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	return d.enqueueRawMqttV1Message(astarteInterface, interfacePath, doc)
+}
+
+// Prepare a MqttV1 message and add it to the publishing channel.  Can be blocking if the channel is full.
+func (d *Device) enqueueRawMqttV1Message(astarteInterface interfaces.AstarteInterface, interfacePath string, bsonPayload []byte) error {
 	var qos uint8 = 2
 	var mapping interfaces.AstarteInterfaceMapping
+	if astarteInterface.Ownership != interfaces.DeviceOwnership {
+		return errors.New("can't send message to a non-Device owned interface")
+	}
 	if astarteInterface.Type == interfaces.DatastreamType {
 		// Guaranteed we won't get an error here
 		mapping, _ = interfaces.InterfaceMappingFromPath(astarteInterface, interfacePath)
@@ -322,19 +390,10 @@ func (d *Device) enqueueMqttV1Message(astarteInterface interfaces.AstarteInterfa
 		mapping.Retention = interfaces.StoredRetention
 	}
 
-	payload := map[string]interface{}{"v": interfaces.NormalizePayload(values, false)}
-	if !timestamp.IsZero() {
-		payload["t"] = timestamp.UTC()
-	}
-	doc, err := bson.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
 	if d.isSendingStoredMessages {
 		fmt.Println("Sending previously stored messages with non-discard retention, the current message may be scheduled later")
 	}
-	message := makeAstarteMessageInfo(mapping.Expiry, mapping.Retention, astarteInterface.Name, interfacePath, astarteInterface.MajorVersion, qos, doc)
+	message := makeAstarteMessageInfo(mapping.Expiry, mapping.Retention, astarteInterface.Name, interfacePath, astarteInterface.MajorVersion, qos, bsonPayload)
 	d.messageQueue <- message
 
 	return nil
@@ -471,6 +530,13 @@ func (d *Device) sendDeviceProperties() error {
 		}
 	}
 	return nil
+}
+
+func parseBSONPayload(payload []byte) (map[string]interface{}, error) {
+	// Parse the payload
+	parsed := map[string]interface{}{}
+	err := bson.Unmarshal(payload, parsed)
+	return parsed, err
 }
 
 func bsonRawValueToInterface(v bson.RawValue, valueType string) (interface{}, error) {
