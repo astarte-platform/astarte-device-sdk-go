@@ -112,7 +112,7 @@ func (d *Device) isOutdated(interfaceName string, interfaceMajor int) bool {
 		}
 	}
 	// if the interface is not present in the current introspection, it must be outdated
-	return false
+	return true
 }
 
 func (d *Device) storeProperty(interfaceName string, path string, interfaceMajor int, value []byte) {
