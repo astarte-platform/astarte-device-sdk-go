@@ -34,14 +34,17 @@ func (d *Device) getBaseTopic() string {
 }
 
 func (d *Device) initializeMQTTClient() error {
-	s := mqtt.NewFileStore(filepath.Join(d.persistencyDir, "mqttstore"))
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(d.brokerURL)
 	opts.SetAutoReconnect(d.AutoReconnect)
-	opts.SetStore(s)
 	opts.SetClientID(fmt.Sprintf("%s/%s", d.realm, d.deviceID))
 	opts.SetConnectTimeout(30 * time.Second)
 	opts.SetCleanSession(false)
+
+	if d.useMqttStore {
+		s := mqtt.NewFileStore(filepath.Join(d.persistencyDir, "mqttstore"))
+		opts.SetStore(s)
+	}
 
 	tlsConfig, err := d.getTLSConfig()
 	if err != nil {

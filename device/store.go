@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/astarte-platform/astarte-go/interfaces"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -52,12 +54,18 @@ type property struct {
 	RawValue       []byte `gorm:"not null"`
 }
 
-func (d *Device) getDbDir() string {
+func (d *Device) getDefaultDB() (*gorm.DB, error) {
+	if len(d.persistencyDir) == 0 {
+		return nil, errors.New("persistency not enabled")
+	}
+
 	dbDir := filepath.Join(d.persistencyDir, "db")
 	if err := os.MkdirAll(dbDir, 0700); err != nil {
-		fmt.Println("WARNING - could not access store dir!")
+		return nil, err
 	}
-	return dbDir
+
+	dbpath := filepath.Join(dbDir, "persistency.db")
+	return gorm.Open(sqlite.Open(dbpath), &gorm.Config{})
 }
 
 func (d *Device) migrateDb() error {
@@ -260,6 +268,10 @@ func (d *Device) handlePurgeProperties(payload []byte) error {
 }
 
 func (d *Device) retrieveDevicePropertiesFromStorage() []property {
+	if d.db == nil {
+		return []property{}
+	}
+
 	var properties []property
 	d.db.Find(&properties)
 	upToDate := []property{}
