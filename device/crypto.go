@@ -15,8 +15,9 @@
 package device
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -105,7 +106,7 @@ func (d *Device) ensureCSR() error {
 			CommonName:   fmt.Sprintf("%s/%s", d.realm, d.deviceID),
 			Organization: []string{"Devices"},
 		},
-		SignatureAlgorithm: x509.SHA256WithRSA,
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
 	}
 
 	// Get the private key
@@ -119,19 +120,18 @@ func (d *Device) ensureCSR() error {
 	}
 
 	var parsedKey interface{}
-	if parsedKey, err = x509.ParsePKCS1PrivateKey(privPem.Bytes); err != nil {
-		if parsedKey, err = x509.ParsePKCS8PrivateKey(privPem.Bytes); err != nil { // note this returns type `interface{}`
-			return err
+	// Try loading EC first
+	if parsedKey, err = x509.ParseECPrivateKey(privPem.Bytes); err != nil {
+		if parsedKey, err = x509.ParsePKCS1PrivateKey(privPem.Bytes); err != nil {
+			if parsedKey, err = x509.ParsePKCS8PrivateKey(privPem.Bytes); err != nil {
+				// note this returns type `interface{}`
+				return err
+			}
 		}
 	}
 
-	privateKey, ok := parsedKey.(*rsa.PrivateKey)
-	if !ok {
-		return errors.New("Unable to parse RSA private key, clearing the crypto store")
-	}
-
 	// Sign
-	csrBytes, err := x509.CreateCertificateRequest(rand.Reader, &template, privateKey)
+	csrBytes, err := x509.CreateCertificateRequest(rand.Reader, &template, parsedKey)
 	if err != nil {
 		return err
 	}
@@ -170,13 +170,12 @@ func (d *Device) ensureKeyPair() error {
 
 	// We need to generate the key
 	// First of all, clear the crypto dir, just to be sure.
-	d.ClearCrypto()
+	if err := d.ClearCrypto(); err != nil {
+		return err
+	}
 
 	reader := rand.Reader
-	// Certificates are short-lived, 2048 is fine.
-	bitSize := 2048
-
-	key, err := rsa.GenerateKey(reader, bitSize)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), reader)
 	if err != nil {
 		return err
 	}
@@ -201,22 +200,27 @@ func (d *Device) saveCertificateFromString(certificateString string) error {
 	return ioutil.WriteFile(certFile, []byte(certificateString), 0600)
 }
 
-func savePEMKey(fileName string, key *rsa.PrivateKey) error {
+func savePEMKey(fileName string, key *ecdsa.PrivateKey) error {
 	outFile, err := os.Create(fileName)
 	if err != nil {
 		return err
 	}
 	defer outFile.Close()
 
+	x509Encoded, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+
 	var privateKey = &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(key),
+		Type:  "EC PRIVATE KEY",
+		Bytes: x509Encoded,
 	}
 
 	return pem.Encode(outFile, privateKey)
 }
 
-func savePublicPEMKey(fileName string, pubkey rsa.PublicKey) error {
+func savePublicPEMKey(fileName string, pubkey ecdsa.PublicKey) error {
 	pkixBytes, err := x509.MarshalPKIXPublicKey(&pubkey)
 	if err != nil {
 		return err
