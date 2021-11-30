@@ -76,7 +76,10 @@ func (d *Device) initializeMQTTClient() error {
 		if len(tokens) > 2 {
 			// Is it a control message?
 			if tokens[2] == "control" {
-				// TODO: Handle control messages
+				err := d.handleControlMessages(strings.Join(tokens[3:], "/"), msg.Payload())
+				if err != nil {
+					d.OnErrors(d, err)
+				}
 				return
 			}
 
@@ -158,7 +161,6 @@ func (d *Device) initializeMQTTClient() error {
 					}
 				}
 			} else if d.OnErrors != nil {
-
 				// Something is off.
 				d.OnErrors(d, fmt.Errorf("Received message for unregistered interface %s", interfaceName))
 			}
@@ -167,6 +169,16 @@ func (d *Device) initializeMQTTClient() error {
 
 	d.m = mqtt.NewClient(opts)
 
+	return nil
+}
+
+func (d *Device) handleControlMessages(message string, payload []byte) error {
+	switch message {
+	case "consumer/properties":
+		return d.handlePurgeProperties(payload)
+	}
+
+	// Not handled
 	return nil
 }
 
@@ -500,9 +512,6 @@ func (d *Device) sendIntrospection() error {
 func (d *Device) sendEmptyCache() error {
 	// Set up empty cache
 	emptyCacheTopic := fmt.Sprintf("%s/control/emptyCache", d.getBaseTopic())
-
-	// Erase our server-owned properties in the storage (we want a fresh start)
-	d.removeAllServerOwnedPropertiesFromStorage()
 
 	// Send it
 	t := d.m.Publish(emptyCacheTopic, 2, false, "1")

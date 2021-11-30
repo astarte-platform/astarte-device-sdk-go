@@ -15,10 +15,14 @@
 package device
 
 import (
+	"bytes"
+	"compress/zlib"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/astarte-platform/astarte-go/interfaces"
@@ -157,19 +161,84 @@ func (d *Device) removePropertyFromStorage(interfaceName, path string, interface
 	d.db.Where(&property{InterfaceName: interfaceName, Path: path, InterfaceMajor: interfaceMajor}).Delete(&property{})
 }
 
-func (d *Device) removeAllServerOwnedPropertiesFromStorage() {
+func (d *Device) removePropertyFromStorageForAllMajors(interfaceName, path string) {
 	if d.db == nil {
 		// Nothing to do
 		return
 	}
+	d.db.Where(&property{InterfaceName: interfaceName, Path: path}).Delete(&property{})
+}
 
-	// Find all server owned interfaces currently in our introspection and storage
-	for _, astarteInterface := range d.interfaces {
-		if astarteInterface.Ownership == interfaces.ServerOwnership {
-			// Delete anything pertaining to this interface
-			d.db.Where(&property{InterfaceName: astarteInterface.Name}).Delete(&property{})
+func (d *Device) handlePurgeProperties(payload []byte) error {
+	if d.db == nil {
+		// If no DB is up, there's no action we have to take
+		return nil
+	}
+
+	var (
+		flateReader      io.ReadCloser
+		err              error
+		storedProperties map[string]map[string]interface{}
+	)
+	// Create a new bytearray with 4 padding bytes
+	deflated := payload[4:]
+
+	bytesReader := bytes.NewReader(deflated)
+	flateReader, err = zlib.NewReader(bytesReader)
+	if err != nil {
+		return err
+	}
+
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, flateReader)
+	if err != nil {
+		return err
+	}
+	if e := flateReader.Close(); e != nil {
+		return e
+	}
+
+	// Get existing properties
+	storedProperties, err = d.GetAllProperties()
+	if err != nil {
+		return err
+	}
+
+	purgePropertiesMessage := buf.String()
+	if len(purgePropertiesMessage) > 0 {
+		consumerProperties := strings.Split(purgePropertiesMessage, ";")
+		for _, entry := range consumerProperties {
+			// Get the content
+			splt := strings.SplitN(entry, "/", 2)
+			if len(splt) != 2 {
+				// Message was corrupt somehow
+				continue
+			}
+			interfaceName := splt[0]
+			interfacePath := "/" + splt[1]
+
+			if paths, ok := storedProperties[interfaceName]; ok {
+				// Delete is a no-op if the path doesn't exist
+				delete(paths, interfacePath)
+				// Rewrite the map. To spare some resources, simply erase the key from the main map if we
+				// came to an empty map
+				if len(paths) > 0 {
+					storedProperties[interfaceName] = paths
+				} else {
+					delete(storedProperties, interfaceName)
+				}
+			}
 		}
 	}
+
+	// Ok - we need to erase what's left from the storage
+	for k, v := range storedProperties {
+		for path := range v {
+			d.removePropertyFromStorageForAllMajors(k, path)
+		}
+	}
+
+	return nil
 }
 
 func (d *Device) retrieveDevicePropertiesFromStorage() []property {
