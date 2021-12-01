@@ -15,9 +15,14 @@
 package device
 
 import (
+	"bytes"
+	"compress/zlib"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/astarte-platform/astarte-go/interfaces"
@@ -49,6 +54,10 @@ func (d *Device) getDbDir() string {
 }
 
 func (d *Device) migrateDb() error {
+	if d.db == nil {
+		// Nothing to do
+		return nil
+	}
 	if err := d.db.AutoMigrate(&astarteMessageInfo{}, &property{}); err != nil {
 		return fmt.Errorf("error in database migration: %s", err.Error())
 	}
@@ -64,44 +73,63 @@ func makeAstarteMessageInfo(expiry int, retention interfaces.AstarteMappingReten
 }
 
 func (d *Device) storeFailedMessage(message astarteMessageInfo) {
-	// Gorm creates a (autoincrementing) StorageId for us if it is 0: thank you gorm!
-	d.db.Create(&message)
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
+	// If the StorageId is != 0, then the message was already stored, no point in failing a transaction
+	if message.StorageId == 0 {
+		// Gorm creates a (autoincrementing) StorageId for us if it is 0: thank you gorm!
+		d.db.Create(&message)
+	}
 }
 
-func (d *Device) removeFailedMessage(storageId int) {
+func (d *Device) removeFailedMessageFromStorage(storageId int) {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
 	d.db.Delete(&astarteMessageInfo{}, storageId)
 }
 
 func (d *Device) resendStoredMessages() {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
 	var messages []astarteMessageInfo
 	d.db.Find(&messages)
 	for _, message := range messages {
-		if !isExpired(message) && !d.isOutdated(message.InterfaceName, message.InterfaceMajor) {
+		if !isStoredMessageExpired(message) && !d.isInterfaceOutdatedInIntrospection(message.InterfaceName, message.InterfaceMajor) {
 			// if the message is not expired, try resending it
 			d.messageQueue <- message
 		} else {
 			// else, it can be removed
-			d.removeFailedMessage(message.StorageId)
+			d.removeFailedMessageFromStorage(message.StorageId)
 		}
 	}
 }
 
 func (d *Device) resendVolatileMessages() {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
 	for len(d.volatileMessages) > 0 {
 		message := d.volatileMessages[0]
 		d.volatileMessages = d.volatileMessages[1:]
 		// try resending the message only if it is not expired
-		if !isExpired(message) && !d.isOutdated(message.InterfaceName, message.InterfaceMajor) {
+		if !isStoredMessageExpired(message) && !d.isInterfaceOutdatedInIntrospection(message.InterfaceName, message.InterfaceMajor) {
 			d.messageQueue <- message
 		}
 	}
 }
 
-func isExpired(message astarteMessageInfo) bool {
+func isStoredMessageExpired(message astarteMessageInfo) bool {
 	return message.AbsoluteExpiry <= time.Now().Unix() && message.AbsoluteExpiry != 0
 }
 
-func (d *Device) isOutdated(interfaceName string, interfaceMajor int) bool {
+func (d *Device) isInterfaceOutdatedInIntrospection(interfaceName string, interfaceMajor int) bool {
 	for _, astarteInterface := range d.interfaces {
 		if astarteInterface.Name == interfaceName {
 			if astarteInterface.MajorVersion != interfaceMajor {
@@ -112,25 +140,113 @@ func (d *Device) isOutdated(interfaceName string, interfaceMajor int) bool {
 		}
 	}
 	// if the interface is not present in the current introspection, it must be outdated
-	return false
+	return true
 }
 
 func (d *Device) storeProperty(interfaceName string, path string, interfaceMajor int, value []byte) {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
 	d.db.Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&property{InterfaceName: interfaceName, Path: path, InterfaceMajor: interfaceMajor, RawValue: value})
 }
 
-func (d *Device) deleteProperty(interfaceName string, path string, interfaceMajor int) {
-	d.db.Delete(&interfaceName, &path, &interfaceMajor)
+func (d *Device) removePropertyFromStorage(interfaceName, path string, interfaceMajor int) {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
+	d.db.Where(&property{InterfaceName: interfaceName, Path: path, InterfaceMajor: interfaceMajor}).Delete(&property{})
 }
 
-func (d *Device) retrieveDeviceProperties() []property {
+func (d *Device) removePropertyFromStorageForAllMajors(interfaceName, path string) {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
+	d.db.Where(&property{InterfaceName: interfaceName, Path: path}).Delete(&property{})
+}
+
+func (d *Device) handlePurgeProperties(payload []byte) error {
+	if d.db == nil {
+		// If no DB is up, there's no action we have to take
+		return nil
+	}
+
+	var (
+		flateReader      io.ReadCloser
+		err              error
+		storedProperties map[string]map[string]interface{}
+	)
+	// Create a new bytearray with 4 padding bytes
+	deflated := payload[4:]
+
+	bytesReader := bytes.NewReader(deflated)
+	flateReader, err = zlib.NewReader(bytesReader)
+	if err != nil {
+		return err
+	}
+
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, flateReader)
+	if err != nil {
+		return err
+	}
+	if e := flateReader.Close(); e != nil {
+		return e
+	}
+
+	// Get existing properties
+	storedProperties, err = d.GetAllProperties()
+	if err != nil {
+		return err
+	}
+
+	purgePropertiesMessage := buf.String()
+	if len(purgePropertiesMessage) > 0 {
+		consumerProperties := strings.Split(purgePropertiesMessage, ";")
+		for _, entry := range consumerProperties {
+			// Get the content
+			splt := strings.SplitN(entry, "/", 2)
+			if len(splt) != 2 {
+				// Message was corrupt somehow
+				continue
+			}
+			interfaceName := splt[0]
+			interfacePath := "/" + splt[1]
+
+			if paths, ok := storedProperties[interfaceName]; ok {
+				// Delete is a no-op if the path doesn't exist
+				delete(paths, interfacePath)
+				// Rewrite the map. To spare some resources, simply erase the key from the main map if we
+				// came to an empty map
+				if len(paths) > 0 {
+					storedProperties[interfaceName] = paths
+				} else {
+					delete(storedProperties, interfaceName)
+				}
+			}
+		}
+	}
+
+	// Ok - we need to erase what's left from the storage
+	for k, v := range storedProperties {
+		for path := range v {
+			d.removePropertyFromStorageForAllMajors(k, path)
+		}
+	}
+
+	return nil
+}
+
+func (d *Device) retrieveDevicePropertiesFromStorage() []property {
 	var properties []property
 	d.db.Find(&properties)
 	upToDate := []property{}
 	for _, property := range properties {
-		if !d.isOutdated(property.InterfaceName, property.InterfaceMajor) {
+		if !d.isInterfaceOutdatedInIntrospection(property.InterfaceName, property.InterfaceMajor) {
 			// do not send an outdated property
 			// we can safely assume that properties is not a big collection
 			upToDate = append(upToDate, property)
@@ -139,4 +255,87 @@ func (d *Device) retrieveDeviceProperties() []property {
 		// TODO: cleanup outdated properties
 	}
 	return upToDate
+}
+
+func valueFromBSONPayload(payload []byte) (interface{}, error) {
+	parsed, err := parseBSONPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	v, ok := parsed["v"]
+	if !ok {
+		return nil, errors.New("malformed property")
+	}
+
+	return v, nil
+}
+
+// GetProperty retrieves a property from the local storage, if any. It returns nil and an error in case
+// no storage is available or if the property wasn't found in the local storage or if any other error
+// occurred while handling it, otherwise it returns the property's value.
+func (d *Device) GetProperty(interfaceName, interfacePath string) (interface{}, error) {
+	if d.db == nil {
+		return nil, errors.New("no db available")
+	}
+
+	var p property
+	result := d.db.Where(&property{InterfaceName: interfaceName, Path: interfacePath}).First(&p)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return valueFromBSONPayload(p.RawValue)
+}
+
+// GetAllPropertiesForInterface retrieves all available and stored properties from the local storage, if any,
+// for a given interface. It returns an empty map and an error in case no storage is available, if no properties were found
+// or if any error happened while handling them, otherwise it returns a map containing all stored paths and their
+// respective values.
+func (d *Device) GetAllPropertiesForInterface(interfaceName string) (map[string]interface{}, error) {
+	if d.db == nil {
+		return map[string]interface{}{}, errors.New("no db available")
+	}
+
+	var properties []property
+	result := d.db.Where(&property{InterfaceName: interfaceName}).Find(&properties)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	props := map[string]interface{}{}
+	for _, p := range properties {
+		if v, err := valueFromBSONPayload(p.RawValue); err != nil {
+			return props, err
+		} else {
+			props[p.Path] = v
+		}
+	}
+
+	return props, nil
+}
+
+// GetAllProperties retrieves all available and stored properties from the local storage, if any.
+// It returns an empty map and an error in case no storage is available or if any error happened while retrieving
+// the properties, otherwise it returns a multi-dimensional map containing all the available interfaces, and for
+// each interface all its available paths with their respective values.
+func (d *Device) GetAllProperties() (map[string]map[string]interface{}, error) {
+	if d.db == nil {
+		return map[string]map[string]interface{}{}, errors.New("no db available")
+	}
+
+	props := map[string]map[string]interface{}{}
+	for _, p := range d.retrieveDevicePropertiesFromStorage() {
+		if v, err := valueFromBSONPayload(p.RawValue); err != nil {
+			return props, err
+		} else {
+			if _, ok := props[p.InterfaceName]; !ok {
+				// Create the inner map
+				props[p.InterfaceName] = map[string]interface{}{}
+			}
+			props[p.InterfaceName][p.Path] = v
+		}
+	}
+
+	return props, nil
 }
