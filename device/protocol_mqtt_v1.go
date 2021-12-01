@@ -528,14 +528,17 @@ func (d *Device) sendDeviceProperties() error {
 	for _, property := range properties {
 		if d.interfaces[property.InterfaceName].Ownership == interfaces.DeviceOwnership {
 			// if so, set up publish
-			topic := fmt.Sprintf("%s/%s/%s", d.getBaseTopic(), property.InterfaceName, property.Path)
+			topic := fmt.Sprintf("%s/%s%s", d.getBaseTopic(), property.InterfaceName, property.Path)
 			// And just DO IT
 			t := d.m.Publish(topic, 2, false, property.RawValue)
 			fmt.Printf("Sending device property %s\n", topic)
 			if !t.WaitTimeout(5 * time.Second) {
 				return errors.New("Timed out while sending device property")
 			}
-			return t.Error()
+			// If an error occurred, let's return and see what's in store
+			if t.Error() != nil {
+				return t.Error()
+			}
 		}
 	}
 	return nil
