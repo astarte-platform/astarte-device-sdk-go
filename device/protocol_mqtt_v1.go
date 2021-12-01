@@ -15,8 +15,12 @@
 package device
 
 import (
+	"bytes"
+	"compress/zlib"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -524,6 +528,8 @@ func (d *Device) sendEmptyCache() error {
 
 func (d *Device) sendDeviceProperties() error {
 	properties := d.retrieveDevicePropertiesFromStorage()
+	var purgePropertiesMessage string
+
 	// Check if property is device-owned
 	for _, property := range properties {
 		if d.interfaces[property.InterfaceName].Ownership == interfaces.DeviceOwnership {
@@ -539,9 +545,48 @@ func (d *Device) sendDeviceProperties() error {
 			if t.Error() != nil {
 				return t.Error()
 			}
+
+			// Add to the purge properties message
+			purgePropertiesMessage += property.InterfaceName + property.Path + ";"
 		}
 	}
-	return nil
+
+	if len(purgePropertiesMessage) > 0 {
+		// If we built a purge properties message, remove the trailing ";"
+		purgePropertiesMessage = purgePropertiesMessage[:len(purgePropertiesMessage)-1]
+	}
+	// We're sending the purge properties message even if it's empty, as it indeed has a meaning
+	return d.sendPurgeProperties(purgePropertiesMessage)
+}
+
+func (d *Device) sendPurgeProperties(purgePropertiesMessage string) error {
+	var (
+		payloadHeader [4]byte
+		out           []byte
+		err           error
+	)
+
+	bytesWriter := new(bytes.Buffer)
+	flateWriter := zlib.NewWriter(bytesWriter)
+
+	_, err = io.Copy(flateWriter, bytes.NewBufferString(purgePropertiesMessage))
+	if err != nil {
+		return err
+	}
+	if e := flateWriter.Close(); e != nil {
+		return e
+	}
+
+	// Create the output by adding the padding and the deflated message
+	binary.BigEndian.PutUint32(payloadHeader[0:4], uint32(len(purgePropertiesMessage)))
+	out = append(out, payloadHeader[0:4]...)
+	out = append(out, bytesWriter.Bytes()...)
+
+	// This is a special control message, as such we gotta circumvent the queue and just go for it (QoS == 2)
+	t := d.m.Publish(fmt.Sprintf("%s/control/producer/properties", d.getBaseTopic()), 2, false, out)
+	// We wait for either successful delivery or error
+	_ = t.Wait()
+	return t.Error()
 }
 
 func parseBSONPayload(payload []byte) (map[string]interface{}, error) {
