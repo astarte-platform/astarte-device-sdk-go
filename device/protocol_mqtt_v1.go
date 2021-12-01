@@ -326,6 +326,13 @@ func (d *Device) SetProperty(interfaceName, path string, value interface{}) erro
 		if err := interfaces.ValidateIndividualMessage(iface, path, value); err != nil {
 			return err
 		}
+
+		// Check if we're resending the same property twice
+		if d.hasAlreadySentPropertyValue(interfaceName, path, value) {
+			// in that case, do not enqueue the message
+			fmt.Printf("Property %s%s already set on the same value, not resending it\n", interfaceName, path)
+			return nil
+		}
 	} else {
 		return fmt.Errorf("Interface %s not registered", interfaceName)
 	}
@@ -365,6 +372,19 @@ func (d *Device) sendLoop() {
 	for next := range d.messageQueue {
 		d.publishMessage(next)
 	}
+}
+
+func (d *Device) hasAlreadySentPropertyValue(interfaceName, path string, newValue interface{}) bool {
+	// the path has already been validated
+	oldValue, err := d.GetProperty(interfaceName, path)
+	if err != nil {
+		// so if we're here, it must be because property has not been set yet
+		return false
+	}
+	if oldValue == newValue {
+		return true
+	}
+	return false
 }
 
 // Prepare a MqttV1 message and add it to the publishing channel.  Can be blocking if the channel is full.
