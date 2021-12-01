@@ -280,7 +280,9 @@ func (d *Device) GetProperty(interfaceName, interfacePath string) (interface{}, 
 	}
 
 	var p property
-	result := d.db.Where(&property{InterfaceName: interfaceName, Path: interfacePath}).First(&p)
+	interfaceMajor := d.interfaces[interfaceName].MajorVersion
+	// since we use all fields of the primary key, we're sure there will be at most one property
+	result := d.db.Where(&property{InterfaceName: interfaceName, Path: interfacePath, InterfaceMajor: interfaceMajor}).Find(&p)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -298,7 +300,8 @@ func (d *Device) GetAllPropertiesForInterface(interfaceName string) (map[string]
 	}
 
 	var properties []property
-	result := d.db.Where(&property{InterfaceName: interfaceName}).Find(&properties)
+	interfaceMajor := d.interfaces[interfaceName].MajorVersion
+	result := d.db.Where(&property{InterfaceName: interfaceName, InterfaceMajor: interfaceMajor}).Find(&properties)
 	if result.Error != nil {
 		return nil, result.Error
 	}
