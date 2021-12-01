@@ -56,14 +56,27 @@ func (d *Device) ClearCrypto() error {
 
 func (d *Device) hasValidCertificate() bool {
 	// Does the certificate exist?
-	cert, err := tls.LoadX509KeyPair(filepath.Join(d.getCryptoDir(), "device.crt"),
+	_, err := tls.LoadX509KeyPair(filepath.Join(d.getCryptoDir(), "device.crt"),
 		filepath.Join(d.getCryptoDir(), "device.key"))
 	if err != nil {
 		return false
 	}
 
+	// In this case, load the certificate (LoadX509KeyPair won't work here)
+	r, err := ioutil.ReadFile(filepath.Join(d.getCryptoDir(), "device.crt"))
+	if err != nil {
+		return false
+	}
+
+	block, _ := pem.Decode(r)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		// Didn't work
+		return false
+	}
+
 	// Return whether it's still valid.
-	return time.Now().Before(cert.Leaf.NotAfter)
+	return time.Now().Before(cert.NotAfter)
 }
 
 func (d *Device) getTLSConfig() (*tls.Config, error) {
