@@ -112,7 +112,9 @@ func (d *Device) initializeMQTTClient() error {
 				case iface.Aggregation == interfaces.IndividualAggregation:
 					interfacePath := "/" + tokens[3]
 
-					d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+					if iface.Type == interfaces.PropertiesType {
+						d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+					}
 
 					// Create the message
 					m := IndividualMessage{
@@ -145,7 +147,9 @@ func (d *Device) initializeMQTTClient() error {
 						}
 
 						// N.B.: properties with object aggregation are not yet supported by Astarte
-						d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+						if iface.Type == interfaces.PropertiesType {
+							d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+						}
 
 						// Create the message
 						m := AggregateMessage{
