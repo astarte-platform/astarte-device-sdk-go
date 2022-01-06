@@ -112,7 +112,9 @@ func (d *Device) initializeMQTTClient() error {
 				case iface.Aggregation == interfaces.IndividualAggregation:
 					interfacePath := "/" + tokens[3]
 
-					d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+					if iface.Type == interfaces.PropertiesType {
+						d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+					}
 
 					// Create the message
 					m := IndividualMessage{
@@ -145,7 +147,9 @@ func (d *Device) initializeMQTTClient() error {
 						}
 
 						// N.B.: properties with object aggregation are not yet supported by Astarte
-						d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+						if iface.Type == interfaces.PropertiesType {
+							d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
+						}
 
 						// Create the message
 						m := AggregateMessage{
@@ -403,32 +407,63 @@ func (d *Device) enqueueMqttV1Message(astarteInterface interfaces.AstarteInterfa
 
 // Prepare a MqttV1 message and add it to the publishing channel.  Can be blocking if the channel is full.
 func (d *Device) enqueueRawMqttV1Message(astarteInterface interfaces.AstarteInterface, interfacePath string, bsonPayload []byte) error {
-	var qos uint8 = 2
-	var mapping interfaces.AstarteInterfaceMapping
 	if astarteInterface.Ownership != interfaces.DeviceOwnership {
 		return errors.New("can't send message to a non-Device owned interface")
 	}
+
+	var (
+		// QoS is 0 by default (unreliable)
+		qos       uint8 = 0
+		retention interfaces.AstarteMappingRetention
+		// Defaults to 0
+		expiry int
+		err    error
+	)
+
 	if astarteInterface.Type == interfaces.DatastreamType {
-		// Guaranteed we won't get an error here
-		mapping, _ = interfaces.InterfaceMappingFromPath(astarteInterface, interfacePath)
+		var mapping interfaces.AstarteInterfaceMapping
+		if astarteInterface.Aggregation == interfaces.ObjectAggregation {
+			if mapping, err = getIndividualMappingFromAggregate(astarteInterface); err != nil {
+				return err
+			}
+		} else {
+			// Get the individual mapping - we're sure this won't fail, but just in case.
+			if mapping, err = interfaces.InterfaceMappingFromPath(astarteInterface, interfacePath); err != nil {
+				return err
+			}
+		}
+
 		switch mapping.Reliability {
+		case interfaces.UniqueReliability:
+			qos = 2
 		case interfaces.GuaranteedReliability:
 			qos = 1
-		case interfaces.UnreliableReliability:
-			qos = 0
 		}
+		retention = mapping.Retention
+		expiry = mapping.Expiry
 	} else {
 		// always store property messages
-		mapping.Retention = interfaces.StoredRetention
+		retention = interfaces.StoredRetention
+		// always send with QoS == 2
+		qos = 2
 	}
 
 	if d.isSendingStoredMessages {
 		fmt.Println("Sending previously stored messages with non-discard retention, the current message may be scheduled later")
 	}
-	message := makeAstarteMessageInfo(mapping.Expiry, mapping.Retention, astarteInterface.Name, interfacePath, astarteInterface.MajorVersion, qos, bsonPayload)
+	message := makeAstarteMessageInfo(expiry, retention, astarteInterface.Name, interfacePath, astarteInterface.MajorVersion, qos, bsonPayload)
 	d.messageQueue <- message
 
 	return nil
+}
+
+func getIndividualMappingFromAggregate(astarteInterface interfaces.AstarteInterface) (interfaces.AstarteInterfaceMapping, error) {
+	if len(astarteInterface.Mappings) == 0 {
+		return interfaces.AstarteInterfaceMapping{}, errors.New("no mappings available")
+	}
+
+	// Return the first one, as we trust our checks already did their thing.
+	return astarteInterface.Mappings[0], nil
 }
 
 func (d *Device) publishMessage(message astarteMessageInfo) error {
