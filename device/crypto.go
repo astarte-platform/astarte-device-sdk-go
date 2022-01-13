@@ -34,7 +34,7 @@ import (
 // Usually, you shouldn't need to call this function.
 func (d *Device) ClearCrypto() error {
 	// Delete all files in the crypto dir
-	cryptoDir := d.cryptoDir
+	cryptoDir := d.opts.CryptoDir
 	dirRead, err := os.Open(cryptoDir)
 	if err != nil {
 		return err
@@ -57,13 +57,13 @@ func (d *Device) ClearCrypto() error {
 
 func (d *Device) hasValidCertificate() bool {
 	// Does the certificate exist?
-	if _, err := tls.LoadX509KeyPair(filepath.Join(d.cryptoDir, "device.crt"),
-		filepath.Join(d.cryptoDir, "device.key")); err != nil {
+	if _, err := tls.LoadX509KeyPair(filepath.Join(d.opts.CryptoDir, "device.crt"),
+		filepath.Join(d.opts.CryptoDir, "device.key")); err != nil {
 		return false
 	}
 
 	// In this case, load the certificate (LoadX509KeyPair won't work here)
-	r, err := ioutil.ReadFile(filepath.Join(d.cryptoDir, "device.crt"))
+	r, err := ioutil.ReadFile(filepath.Join(d.opts.CryptoDir, "device.crt"))
 	if err != nil {
 		return false
 	}
@@ -81,16 +81,16 @@ func (d *Device) hasValidCertificate() bool {
 
 func (d *Device) getTLSConfig() (*tls.Config, error) {
 	// Load Device certificate
-	cert, err := tls.LoadX509KeyPair(filepath.Join(d.cryptoDir, "device.crt"),
-		filepath.Join(d.cryptoDir, "device.key"))
+	cert, err := tls.LoadX509KeyPair(filepath.Join(d.opts.CryptoDir, "device.crt"),
+		filepath.Join(d.opts.CryptoDir, "device.key"))
 	if err != nil {
 		return nil, err
 	}
 
 	tlsConfig := new(tls.Config)
 	tlsConfig.Certificates = []tls.Certificate{cert}
-	tlsConfig.RootCAs = d.RootCAs
-	tlsConfig.InsecureSkipVerify = d.IgnoreSSLErrors
+	tlsConfig.RootCAs = d.opts.RootCAs
+	tlsConfig.InsecureSkipVerify = d.opts.IgnoreSSLErrors
 
 	return tlsConfig, nil
 }
@@ -100,7 +100,7 @@ func (d *Device) ensureCSR() error {
 		return err
 	}
 
-	csrFilename := filepath.Join(d.cryptoDir, "device.csr")
+	csrFilename := filepath.Join(d.opts.CryptoDir, "device.csr")
 	if _, err := os.Stat(csrFilename); err == nil {
 		// The file exists, we're fine
 		return nil
@@ -116,13 +116,13 @@ func (d *Device) ensureCSR() error {
 	}
 
 	// Get the private key
-	priv, err := ioutil.ReadFile(filepath.Join(d.cryptoDir, "device.key"))
+	priv, err := ioutil.ReadFile(filepath.Join(d.opts.CryptoDir, "device.key"))
 	if err != nil {
 		return err
 	}
 	privPem, _ := pem.Decode(priv)
 	if privPem == nil {
-		return errors.New("Corrupted data in Device Private key, clearing the crypto store")
+		return errors.New("corrupted data in Device Private key, clearing the crypto store")
 	}
 
 	var parsedKey interface{}
@@ -160,7 +160,7 @@ func (d *Device) ensureCSR() error {
 }
 
 func (d *Device) getCSRString() (string, error) {
-	b, err := ioutil.ReadFile(filepath.Join(d.cryptoDir, "device.csr"))
+	b, err := ioutil.ReadFile(filepath.Join(d.opts.CryptoDir, "device.csr"))
 	if err != nil {
 		return "", err
 	}
@@ -168,7 +168,7 @@ func (d *Device) getCSRString() (string, error) {
 }
 
 func (d *Device) ensureKeyPair() error {
-	keyFile := filepath.Join(d.cryptoDir, "device.key")
+	keyFile := filepath.Join(d.opts.CryptoDir, "device.key")
 	if _, err := os.Stat(keyFile); err == nil {
 		// The file exists, we're fine
 		return nil
@@ -188,18 +188,18 @@ func (d *Device) ensureKeyPair() error {
 
 	publicKey := key.PublicKey
 
-	if err := savePublicPEMKey(filepath.Join(d.cryptoDir, "device.pub"), publicKey); err != nil {
+	if err := savePublicPEMKey(filepath.Join(d.opts.CryptoDir, "device.pub"), publicKey); err != nil {
 		return err
 	}
 	return savePEMKey(keyFile, key)
 }
 
 func (d *Device) saveCertificateFromString(certificateString string) error {
-	certFile := filepath.Join(d.cryptoDir, "device.crt")
+	certFile := filepath.Join(d.opts.CryptoDir, "device.crt")
 	// Attempt loading the certificate to ensure we can use it
 	p, _ := pem.Decode([]byte(certificateString))
 	if p == nil {
-		return errors.New("Could not decode PEM certificate")
+		return errors.New("could not decode PEM certificate")
 	}
 
 	// If it worked, just write the file and call it a day.

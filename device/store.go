@@ -55,11 +55,11 @@ type property struct {
 }
 
 func (d *Device) getDefaultDB() (*gorm.DB, error) {
-	if len(d.persistencyDir) == 0 {
+	if len(d.opts.PersistencyDir) == 0 {
 		return nil, errors.New("persistency not enabled")
 	}
 
-	dbDir := filepath.Join(d.persistencyDir, "db")
+	dbDir := filepath.Join(d.opts.PersistencyDir, "db")
 	if err := os.MkdirAll(dbDir, 0700); err != nil {
 		return nil, err
 	}
