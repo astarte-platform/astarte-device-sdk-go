@@ -29,6 +29,11 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+type astarteDeviceStatus struct {
+	DeviceId          string `gorm:"primaryKey;not null"`
+	LastIntrospection string `gorm:"not null"`
+}
+
 type astarteMessageInfo struct {
 	StorageId      int    `gorm:"primaryKey;autoIncrement;not null"`
 	Retention      string `gorm:"not null"`
@@ -58,7 +63,7 @@ func (d *Device) migrateDb() error {
 		// Nothing to do
 		return nil
 	}
-	if err := d.db.AutoMigrate(&astarteMessageInfo{}, &property{}); err != nil {
+	if err := d.db.AutoMigrate(&astarteDeviceStatus{}, &astarteMessageInfo{}, &property{}); err != nil {
 		return fmt.Errorf("error in database migration: %s", err.Error())
 	}
 	return nil
@@ -269,6 +274,34 @@ func valueFromBSONPayload(payload []byte) (interface{}, error) {
 	}
 
 	return v, nil
+}
+
+func (d *Device) saveLastSentDeviceIntrospection(introspection string) {
+	d.lastSentIntrospection = introspection
+
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
+	d.db.Clauses(clause.OnConflict{
+		UpdateAll: true,
+	}).Create(&astarteDeviceStatus{DeviceId: d.deviceID, LastIntrospection: introspection})
+}
+
+func (d *Device) getLastSentDeviceIntrospection() string {
+	if d.lastSentIntrospection == "" {
+		if d.db == nil {
+			// Nothing to do
+			return ""
+		}
+
+		var status astarteDeviceStatus
+		d.db.Where(&astarteDeviceStatus{DeviceId: d.deviceID}).Find(&status)
+
+		d.lastSentIntrospection = status.LastIntrospection
+	}
+
+	return d.lastSentIntrospection
 }
 
 // GetProperty retrieves a property from the local storage, if any. It returns nil and an error in case

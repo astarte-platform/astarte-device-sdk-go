@@ -47,6 +47,7 @@ type Device struct {
 	messageQueue            chan astarteMessageInfo
 	isSendingStoredMessages bool
 	volatileMessages        []astarteMessageInfo
+	lastSentIntrospection   string
 	// MaxInflightMessages is the maximum number of messages that can be in publishing channel at any given time
 	// before adding messages becomes blocking. Defaults to 100.
 	MaxInflightMessages int
