@@ -187,31 +187,31 @@ func (d *Device) handleControlMessages(message string, payload []byte) error {
 }
 
 func astarteOnConnectHandler(d *Device, client mqtt.Client) {
-	// Should we run the whole Astarte after connect thing?
-	if !d.sessionPresent {
-		// Yes, we should: first, setup subscription
-		if err := d.setupSubscriptions(); err != nil {
-			errorMsg := fmt.Sprintf("Cannot setup subscriptions: %v", err)
-			if d.OnErrors != nil {
-				d.OnErrors(d, errors.New(errorMsg))
-			}
-			fmt.Println(errorMsg)
-			// If we failed to execute this action it means that we got disconnected,
-			// the reconnection mechanism will take care of that so we just return
-			return
+	// Always set up subscriptions
+	if err := d.setupSubscriptions(); err != nil {
+		errorMsg := fmt.Sprintf("Cannot setup subscriptions: %v", err)
+		if d.OnErrors != nil {
+			d.OnErrors(d, errors.New(errorMsg))
 		}
-		// Then introspection
-		if err := d.sendIntrospection(); err != nil {
-			errorMsg := fmt.Sprintf("Cannot send introspection: %v", err)
-			if d.OnErrors != nil {
+		fmt.Println(errorMsg)
+		// If we failed to execute this action it means that we got disconnected,
+		// the reconnection mechanism will take care of that so we just return
+		return
+	}
+	// And always send introspection
+	if err := d.sendIntrospection(); err != nil {
+		errorMsg := fmt.Sprintf("Cannot send introspection: %v", err)
+		if d.OnErrors != nil {
 
-				d.OnErrors(d, errors.New(errorMsg))
-			}
-			fmt.Println(errorMsg)
-			// If we failed to execute this action it means that we got disconnected,
-			// the reconnection mechanism will take care of that so we just return
-			return
+			d.OnErrors(d, errors.New(errorMsg))
 		}
+		fmt.Println(errorMsg)
+		// If we failed to execute this action it means that we got disconnected,
+		// the reconnection mechanism will take care of that so we just return
+		return
+	}
+	// Then, if we're in a new session
+	if !d.sessionPresent {
 		// Empty cache and
 		if err := d.sendEmptyCache(); err != nil {
 			errorMsg := fmt.Sprintf("Cannot send empty cache: %v", err)
@@ -236,11 +236,6 @@ func astarteOnConnectHandler(d *Device, client mqtt.Client) {
 			return
 		}
 	}
-
-	// If a device connected for the first time, since we do not ask
-	// for a clean session and do not change its clientID, we can assume
-	// that after connection a session is present
-	d.sessionPresent = true
 
 	// If some messages must be retried, do so
 	d.resendFailedMessages()
