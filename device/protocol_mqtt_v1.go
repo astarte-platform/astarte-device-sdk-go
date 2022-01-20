@@ -48,8 +48,8 @@ func (d *Device) initializeMQTTClient() error {
 	}
 	opts.SetTLSConfig(tlsConfig)
 
-	opts.SetOnConnectHandler(func(client mqtt.Client) {
-		astarteOnConnectHandler(d, client)
+	opts.SetOnConnectHandler(func(client mqtt.Client, sessionPresent bool) {
+		astarteOnConnectHandler(d, client, sessionPresent)
 	})
 
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
@@ -186,9 +186,9 @@ func (d *Device) handleControlMessages(message string, payload []byte) error {
 	return nil
 }
 
-func astarteOnConnectHandler(d *Device, client mqtt.Client) {
+func astarteOnConnectHandler(d *Device, client mqtt.Client, sessionPresent bool) {
 	// Should we run the whole Astarte after connect thing?
-	if !d.sessionPresent {
+	if !sessionPresent {
 		// Yes, we should: first, setup subscription
 		if err := d.setupSubscriptions(); err != nil {
 			errorMsg := fmt.Sprintf("Cannot setup subscriptions: %v", err)
@@ -236,11 +236,6 @@ func astarteOnConnectHandler(d *Device, client mqtt.Client) {
 			return
 		}
 	}
-
-	// If a device connected for the first time, since we do not ask
-	// for a clean session and do not change its clientID, we can assume
-	// that after connection a session is present
-	d.sessionPresent = true
 
 	// If some messages must be retried, do so
 	d.resendFailedMessages()

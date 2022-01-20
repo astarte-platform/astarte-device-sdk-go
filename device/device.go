@@ -47,7 +47,6 @@ type Device struct {
 	messageQueue            chan astarteMessageInfo
 	isSendingStoredMessages bool
 	volatileMessages        []astarteMessageInfo
-	sessionPresent          bool
 	// MaxInflightMessages is the maximum number of messages that can be in publishing channel at any given time
 	// before adding messages becomes blocking. Defaults to 100.
 	MaxInflightMessages int
@@ -190,12 +189,6 @@ func (d *Device) Connect(result chan<- error) {
 			connectToken := d.m.Connect().(*mqtt.ConnectToken)
 			if connectToken.Wait() && connectToken.Error() != nil {
 				return connectToken.Error()
-			}
-			if !connectToken.SessionPresent() {
-				fmt.Println("No MQTT session already present, starting one")
-			} else {
-				// remember that a session is present for future reconnections
-				d.sessionPresent = connectToken.SessionPresent()
 			}
 			return nil
 		}

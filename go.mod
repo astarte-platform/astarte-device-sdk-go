@@ -18,3 +18,5 @@ require (
 	gorm.io/driver/sqlite v1.2.6
 	gorm.io/gorm v1.22.3
 )
+
+replace github.com/eclipse/paho.mqtt.golang v1.3.5 => github.com/ispirata/paho.mqtt.golang v1.3.90
