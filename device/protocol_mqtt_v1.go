@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -187,8 +188,13 @@ func (d *Device) handleControlMessages(message string, payload []byte) error {
 }
 
 func astarteOnConnectHandler(d *Device, client mqtt.Client, sessionPresent bool) {
-	// Should we run the whole Astarte after connect thing?
-	if !sessionPresent {
+	// Generate Introspection first
+	introspection := d.generateDeviceIntrospection()
+
+	// Should we run the whole Astarte after connect thing? Yes if one of this is true:
+	//  * we're on a clean session
+	//  * we've sent an old introspection last time
+	if !sessionPresent || introspection != d.getLastSentDeviceIntrospection() {
 		// Yes, we should: first, setup subscription
 		if err := d.setupSubscriptions(); err != nil {
 			errorMsg := fmt.Sprintf("Cannot setup subscriptions: %v", err)
@@ -201,7 +207,7 @@ func astarteOnConnectHandler(d *Device, client mqtt.Client, sessionPresent bool)
 			return
 		}
 		// Then introspection
-		if err := d.sendIntrospection(); err != nil {
+		if err := d.sendIntrospection(introspection); err != nil {
 			errorMsg := fmt.Sprintf("Cannot send introspection: %v", err)
 			if d.OnErrors != nil {
 
@@ -542,20 +548,31 @@ func (d *Device) setupSubscriptions() error {
 	return nil
 }
 
-func (d *Device) sendIntrospection() error {
+func (d *Device) generateDeviceIntrospection() string {
 	// Set up the introspection
-	introspection := ""
-	for _, i := range d.interfaces {
-		introspection = introspection + fmt.Sprintf("%s:%d:%d;", i.Name, i.MajorVersion, i.MinorVersion)
-	}
-	introspection = introspection[:len(introspection)-1]
+	entries := []string{}
 
+	for _, i := range d.interfaces {
+		entries = append(entries, fmt.Sprintf("%s:%d:%d", i.Name, i.MajorVersion, i.MinorVersion))
+	}
+	sort.Strings(entries)
+
+	return strings.Join(entries, ";")
+}
+
+func (d *Device) sendIntrospection(introspection string) error {
 	// Send it to the base topic
 	t := d.m.Publish(d.getBaseTopic(), 2, false, introspection)
 	fmt.Printf("Sending introspection for %s\n", d.getBaseTopic())
 	if !t.WaitTimeout(5 * time.Second) {
 		return errors.New("Timed out while sending introspection")
 	}
+
+	// Update stored introspection if successful
+	if t.Error() == nil {
+		d.saveLastSentDeviceIntrospection(introspection)
+	}
+
 	return t.Error()
 }
 
