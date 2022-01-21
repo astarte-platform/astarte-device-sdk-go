@@ -20,8 +20,8 @@ github.com/gorilla/websocket v1.4.2 h1:+/TMaTYc4QFitKJxsQ7Yye35DkWvkdLcvGKqM+x0U
 github.com/gorilla/websocket v1.4.2/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/iancoleman/orderedmap v0.2.0 h1:sq1N/TFpYH++aViPcaKjys3bDClUEU7s5B+z6jq8pNA=
 github.com/iancoleman/orderedmap v0.2.0/go.mod h1:N0Wam8K1arqPXNWjMo21EXnBPOPp36vB07FNRdD2geA=
-github.com/ispirata/paho.mqtt.golang v1.3.90 h1:om0vKIECC6no6q/UTmPPc6K6jwlDscgqKoSbYFujSaw=
-github.com/ispirata/paho.mqtt.golang v1.3.90/go.mod h1:JGt0RsEwEX+Xa/agj90YJ9d9DH2b7upDZMK9HRbFvCA=
+github.com/ispirata/paho.mqtt.golang v1.3.91-0.20220121155423-6e36d43b2ec9 h1:SsB99Ernz7TCJ0YYGLJMIq+Z1iXSEo0ouoFBkUuhDrA=
+github.com/ispirata/paho.mqtt.golang v1.3.91-0.20220121155423-6e36d43b2ec9/go.mod h1:auKGb+BkaRPRGPQlk7zTeDOoDILblUl1UcnIVLauXZk=
 github.com/jinzhu/inflection v1.0.0 h1:K317FqzuhWc8YvSVlFMCCUb36O/S9MCKRDI7QkRKD/E=
 github.com/jinzhu/inflection v1.0.0/go.mod h1:h+uFLlag+Qp1Va5pdKtLDYj+kHp5pxUVkryuEj+Srlc=
 github.com/jinzhu/now v1.1.2/go.mod h1:d3SSVoowX0Lcu0IBviAWJpolVfI5UJVZZ7cO71lE/z8=

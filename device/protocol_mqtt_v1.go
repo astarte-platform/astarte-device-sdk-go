@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
+	mqtt "github.com/ispirata/paho.mqtt.golang"
 	"github.com/astarte-platform/astarte-go/interfaces"
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )

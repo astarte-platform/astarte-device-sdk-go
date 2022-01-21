@@ -5,8 +5,8 @@ go 1.14
 require (
 	github.com/astarte-platform/astarte-go v0.90.2
 	github.com/cenkalti/backoff/v4 v4.1.2
-	github.com/eclipse/paho.mqtt.golang v1.3.5
 	github.com/google/go-cmp v0.5.5 // indirect
+	github.com/ispirata/paho.mqtt.golang v1.3.91-0.20220121155423-6e36d43b2ec9
 	github.com/jinzhu/now v1.1.3 // indirect
 	github.com/kr/pretty v0.2.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -18,5 +18,3 @@ require (
 	gorm.io/driver/sqlite v1.2.6
 	gorm.io/gorm v1.22.3
 )
-
-replace github.com/eclipse/paho.mqtt.golang v1.3.5 => github.com/ispirata/paho.mqtt.golang v1.3.90

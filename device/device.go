@@ -21,11 +21,11 @@ import (
 	"io/ioutil"
 	"path/filepath"
 
+	mqtt "github.com/ispirata/paho.mqtt.golang"
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
 	"github.com/astarte-platform/astarte-go/misc"
 	backoff "github.com/cenkalti/backoff/v4"
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
