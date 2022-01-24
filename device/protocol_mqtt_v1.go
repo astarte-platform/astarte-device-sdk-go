@@ -394,7 +394,7 @@ func (d *Device) hasAlreadySentPropertyValue(interfaceName, path string, newValu
 
 // Prepare a MqttV1 message and add it to the publishing channel.  Can be blocking if the channel is full.
 func (d *Device) enqueueMqttV1Message(astarteInterface interfaces.AstarteInterface, interfacePath string, values interface{}, timestamp time.Time) error {
-	payload := map[string]interface{}{"v": interfaces.NormalizePayload(values, false)}
+	payload := map[string]interface{}{"v": interfaces.NormalizePayload(values, true)}
 	if !timestamp.IsZero() {
 		payload["t"] = timestamp.UTC()
 	}
