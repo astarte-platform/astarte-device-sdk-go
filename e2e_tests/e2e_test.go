@@ -35,8 +35,25 @@ import (
 	"github.com/astarte-platform/astarte-device-sdk-go/device"
 )
 
+//nolint:dupl
 var (
 	expectedDatastreamIndividual = map[string]interface{}{
+		"/test/binaryblob":       []byte{1, 2, 3, 4, 5},
+		"/test/binaryblobarray":  [][]byte{{12, 23, 34, 45, 56}, {1, 2, 3, 4, 5}},
+		"/test/boolean":          true,
+		"/test/booleanarray":     []bool{true, false, true},
+		"/test/datetime":         time.Date(1996, time.April, 30, 0, 0, 0, 0, time.UTC),
+		"/test/datetimearray":    []time.Time{time.Date(1996, time.April, 30, 0, 0, 0, 0, time.UTC), time.Date(1996, time.April, 30, 0, 0, 0, 0, time.UTC)},
+		"/test/double":           1.1,
+		"/test/doublearray":      []float64{1.1, 2.0, 3.3, 4.5},
+		"/test/integer":          2,
+		"/test/integerarray":     []int{1, 2, 3},
+		"/test/longinteger":      int64(math.MaxInt32 + 1),
+		"/test/longintegerarray": []int64{math.MaxInt32 + 1, math.MaxInt32 + 2},
+		"/test/string":           "hello",
+		"/test/stringarray":      []string{"hello", "world"},
+	}
+	expectedProperties = map[string]interface{}{
 		"/test/binaryblob":       []byte{1, 2, 3, 4, 5},
 		"/test/binaryblobarray":  [][]byte{{12, 23, 34, 45, 56}, {1, 2, 3, 4, 5}},
 		"/test/boolean":          true,
@@ -114,6 +131,51 @@ func (suite *EndToEndSuite) TestDatastreamIndividualDevice() {
 			suite.Fail("Sent value different from received value", expectedValue, received[path])
 		}
 	}
+}
+
+func (suite *EndToEndSuite) TestPropertiesIndividualDevice() {
+	// set everything
+	for k, v := range expectedProperties {
+		if err := suite.d.SetProperty("org.astarte-platform.device.individual.properties.Everything", k, v); err != nil {
+			suite.Fail("Error setting property", err)
+		}
+		fmt.Printf("Set %v on %s\n", v, k)
+		time.Sleep(1 * time.Second)
+	}
+
+	res, err := suite.astarteAPIClient.AppEngine.GetProperties(suite.realm, suite.deviceID, client.AstarteDeviceID, "org.astarte-platform.device.individual.properties.Everything")
+	if err != nil {
+		suite.Fail("Error querying Astarte", err)
+	}
+
+	received := map[string]interface{}{}
+	for k, v := range res {
+		astarteType := strings.Split(k, "/")[2]
+		received[k] = individualValueToAstarteType(v, astarteType)
+	}
+	for path, expectedValue := range expectedProperties {
+		if !suite.Equal(expectedValue, received[path]) {
+			fmt.Printf("Expected: %v : %v  ---- received %v : %v\n",
+				expectedValue, reflect.TypeOf(expectedValue),
+				received[path], reflect.TypeOf(received[path]))
+			suite.Fail("Sent value different from received value", expectedValue, received[path])
+		}
+	}
+
+	// unset everything
+	for k := range expectedProperties {
+		if err := suite.d.UnsetProperty("org.astarte-platform.device.individual.properties.Everything", k); err != nil {
+			suite.Fail("Error unsetting property", err)
+		}
+		fmt.Printf("Unset %s\n", k)
+		time.Sleep(1 * time.Second)
+	}
+
+	res2, err2 := suite.astarteAPIClient.AppEngine.GetProperties(suite.realm, suite.deviceID, client.AstarteDeviceID, "org.astarte-platform.device.individual.properties.Everything")
+	if err2 != nil {
+		suite.Fail("Error querying Astarte", err2)
+	}
+	suite.Empty(res2, "Properties not unset")
 }
 
 // In order for 'go test' to run this suite, we need to create
