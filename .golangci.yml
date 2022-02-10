@@ -154,6 +154,7 @@ linters:
         - errcheck
         - dupl
         - gosec
+        - funlen
 
     # Exclude lll issues for long lines with go:generate
     - linters:

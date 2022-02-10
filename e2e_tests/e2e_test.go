@@ -27,10 +27,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astarte-platform/astarte-device-sdk-go/device"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
-	"github.com/stretchr/testify/suite"
+
+	"github.com/astarte-platform/astarte-device-sdk-go/device"
 )
 
 var (
@@ -87,7 +89,9 @@ func (suite *EndToEndSuite) TearDownSuite() {
 func (suite *EndToEndSuite) TestDatastreamIndividualDevice() {
 	// send everything
 	for k, v := range expectedDatastreamIndividual {
-		suite.d.SendIndividualMessageWithTimestamp("org.astarte-platform.device.individual.datastream.Everything", k, v, time.Now())
+		if err := suite.d.SendIndividualMessageWithTimestamp("org.astarte-platform.device.individual.datastream.Everything", k, v, time.Now()); err != nil {
+			suite.Fail("Error sending message", err)
+		}
 		fmt.Printf("Sent %v on %s\n", v, k)
 		time.Sleep(1 * time.Second)
 	}
@@ -181,6 +185,7 @@ func (suite *EndToEndSuite) setupDevice() {
 	suite.d = d
 }
 
+//nolint
 func individualValueToAstarteType(value interface{}, astarteType string) interface{} {
 	// cast like there's no tomorrow yolo
 	switch astarteType {

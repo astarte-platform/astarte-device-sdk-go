@@ -54,7 +54,9 @@ type property struct {
 
 func (d *Device) getDbDir() string {
 	dbDir := filepath.Join(d.persistencyDir, "db")
-	os.MkdirAll(dbDir, 0700)
+	if err := os.MkdirAll(dbDir, 0700); err != nil {
+		fmt.Println("WARNING - could not access store dir!")
+	}
 	return dbDir
 }
 
@@ -195,10 +197,21 @@ func (d *Device) handlePurgeProperties(payload []byte) error {
 	}
 
 	buf := new(bytes.Buffer)
-	_, err = io.Copy(buf, flateReader)
-	if err != nil {
-		return err
+	// G110: Copy in chunks
+	var totalRead, n int64
+	for {
+		n, err = io.CopyN(buf, flateReader, 1024)
+		totalRead += n
+		if err != nil {
+			if err == io.EOF {
+				// We're done
+				break
+			}
+			// Actual error
+			return err
+		}
 	}
+
 	if e := flateReader.Close(); e != nil {
 		return e
 	}

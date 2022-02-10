@@ -50,7 +50,7 @@ func (d *Device) initializeMQTTClient() error {
 	opts.SetTLSConfig(tlsConfig)
 
 	opts.SetOnConnectHandler(func(client mqtt.Client, sessionPresent bool) {
-		astarteOnConnectHandler(d, client, sessionPresent)
+		astarteOnConnectHandler(d, sessionPresent)
 	})
 
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
@@ -64,120 +64,127 @@ func (d *Device) initializeMQTTClient() error {
 	})
 
 	// This is our message handler
-	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
-		if !strings.HasPrefix(msg.Topic(), d.getBaseTopic()) {
-			if d.OnErrors != nil {
-				d.OnErrors(d, fmt.Errorf("Received message on unexpected topic %s. This is an internal error", msg.Topic()))
-			}
-			return
-		}
-
-		// We split up to 4 since this will give us the path in the correct format.
-		tokens := strings.SplitN(msg.Topic(), "/", 4)
-		if len(tokens) > 2 {
-			// Is it a control message?
-			if tokens[2] == "control" {
-				err := d.handleControlMessages(strings.Join(tokens[3:], "/"), msg.Payload())
-				if err != nil {
-					d.OnErrors(d, err)
-				}
-				return
-			}
-
-			// It's a data message. Grab the interface name.
-			interfaceName := tokens[2]
-			// Parse the payload
-			parsed, err := parseBSONPayload(msg.Payload())
-			if err != nil {
-				if d.OnErrors != nil {
-					d.OnErrors(d, err)
-				}
-				return
-			}
-			timestamp := time.Time{}
-			if t, ok := parsed["t"]; ok {
-				// We have a timestamp
-				if pT, ok := t.(primitive.DateTime); ok {
-					timestamp = pT.Time()
-				}
-			}
-
-			if iface, ok := d.interfaces[interfaceName]; ok {
-				// Is it individual?
-				switch {
-				case len(tokens) != 4:
-					if d.OnErrors != nil {
-						d.OnErrors(d, fmt.Errorf("could not parse incoming message on topic structure %s", tokens))
-					}
-					return
-				case iface.Aggregation == interfaces.IndividualAggregation:
-					interfacePath := "/" + tokens[3]
-
-					if iface.Type == interfaces.PropertiesType {
-						d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
-					}
-
-					// Create the message
-					m := IndividualMessage{
-						Interface: iface,
-						Path:      interfacePath,
-						Value:     parsed["v"],
-						Timestamp: timestamp,
-					}
-					if d.OnIndividualMessageReceived != nil {
-						d.OnIndividualMessageReceived(d, m)
-					}
-				case iface.Aggregation == interfaces.ObjectAggregation:
-					interfacePath := "/" + tokens[3]
-
-					if val, ok := parsed["v"].(map[string]interface{}); !ok {
-						d.OnErrors(d, fmt.Errorf("could not parse aggregate message payload"))
-					} else {
-						// We have to check whether we have some nested arrays or not in here.
-						for k, v := range val {
-							if bsonArray, ok := v.(primitive.A); ok {
-								// That is, in fact, the case. Convert to a generic Go slice first.
-								bsonArraySlice := []interface{}(bsonArray)
-								// Now reflect the heck out of it and specialize the slice
-								specializedSlice := reflect.MakeSlice(reflect.SliceOf(reflect.TypeOf(bsonArraySlice[0])), len(bsonArraySlice), cap(bsonArraySlice))
-								for i := 0; i < specializedSlice.Len(); i++ {
-									specializedSlice.Index(i).Set(reflect.ValueOf(bsonArraySlice[i]))
-								}
-								val[k] = specializedSlice.Interface()
-							}
-						}
-
-						// N.B.: properties with object aggregation are not yet supported by Astarte
-						if iface.Type == interfaces.PropertiesType {
-							d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, msg.Payload())
-						}
-
-						// Create the message
-						m := AggregateMessage{
-							Interface: iface,
-							Path:      interfacePath,
-							Values:    val,
-							Timestamp: timestamp,
-						}
-
-						if d.OnAggregateMessageReceived != nil {
-							d.OnAggregateMessageReceived(d, m)
-						}
-					}
-				}
-			} else if d.OnErrors != nil {
-				// Something is off.
-				d.OnErrors(d, fmt.Errorf("Received message for unregistered interface %s", interfaceName))
-			}
-		}
-	})
+	opts.SetDefaultPublishHandler(d.astarteGoSDKDefaultPublishHandler)
 
 	d.m = mqtt.NewClient(opts)
 
 	return nil
 }
 
+func (d *Device) astarteGoSDKDefaultPublishHandler(client mqtt.Client, msg mqtt.Message) {
+	if !strings.HasPrefix(msg.Topic(), d.getBaseTopic()) {
+		if d.OnErrors != nil {
+			d.OnErrors(d, fmt.Errorf("Received message on unexpected topic %s. This is an internal error", msg.Topic()))
+		}
+		return
+	}
+
+	// We split up to 4 since this will give us the path in the correct format.
+	tokens := strings.SplitN(msg.Topic(), "/", 4)
+	if len(tokens) > 2 {
+		// Is it a control message?
+		if tokens[2] == "control" {
+			err := d.handleControlMessages(strings.Join(tokens[3:], "/"), msg.Payload())
+			if err != nil {
+				d.OnErrors(d, err)
+			}
+			return
+		}
+
+		// It's a data message. Grab the interface name.
+		interfaceName := tokens[2]
+		// Parse the payload
+		parsed, err := parseBSONPayload(msg.Payload())
+		if err != nil {
+			if d.OnErrors != nil {
+				d.OnErrors(d, err)
+			}
+			return
+		}
+		timestamp := time.Time{}
+		if t, ok := parsed["t"]; ok {
+			// We have a timestamp
+			if pT, ok := t.(primitive.DateTime); ok {
+				timestamp = pT.Time()
+			}
+		}
+
+		if iface, ok := d.interfaces[interfaceName]; ok {
+			d.processIncomingMessage(iface, tokens, msg.Payload(), parsed, timestamp)
+		} else if d.OnErrors != nil {
+			// Something is off.
+			d.OnErrors(d, fmt.Errorf("Received message for unregistered interface %s", interfaceName))
+		}
+	}
+}
+
+func (d *Device) processIncomingMessage(iface interfaces.AstarteInterface, tokens []string, payload []byte, parsed map[string]interface{}, timestamp time.Time) {
+	// Is it individual?
+	switch {
+	case len(tokens) != 4:
+		if d.OnErrors != nil {
+			d.OnErrors(d, fmt.Errorf("could not parse incoming message on topic structure %s", tokens))
+		}
+		return
+	case iface.Aggregation == interfaces.IndividualAggregation:
+		interfacePath := "/" + tokens[3]
+
+		if iface.Type == interfaces.PropertiesType {
+			d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, payload)
+		}
+
+		// Create the message
+		m := IndividualMessage{
+			Interface: iface,
+			Path:      interfacePath,
+			Value:     parsed["v"],
+			Timestamp: timestamp,
+		}
+		if d.OnIndividualMessageReceived != nil {
+			d.OnIndividualMessageReceived(d, m)
+		}
+	case iface.Aggregation == interfaces.ObjectAggregation:
+		interfacePath := "/" + tokens[3]
+
+		if val, ok := parsed["v"].(map[string]interface{}); !ok {
+			d.OnErrors(d, fmt.Errorf("could not parse aggregate message payload"))
+		} else {
+			// We have to check whether we have some nested arrays or not in here.
+			for k, v := range val {
+				if bsonArray, ok := v.(primitive.A); ok {
+					// That is, in fact, the case. Convert to a generic Go slice first.
+					bsonArraySlice := []interface{}(bsonArray)
+					// Now reflect the heck out of it and specialize the slice
+					specializedSlice := reflect.MakeSlice(reflect.SliceOf(reflect.TypeOf(bsonArraySlice[0])), len(bsonArraySlice), cap(bsonArraySlice))
+					for i := 0; i < specializedSlice.Len(); i++ {
+						specializedSlice.Index(i).Set(reflect.ValueOf(bsonArraySlice[i]))
+					}
+					val[k] = specializedSlice.Interface()
+				}
+			}
+
+			// N.B.: properties with object aggregation are not yet supported by Astarte
+			if iface.Type == interfaces.PropertiesType {
+				d.storeProperty(iface.Name, interfacePath, iface.MajorVersion, payload)
+			}
+
+			// Create the message
+			m := AggregateMessage{
+				Interface: iface,
+				Path:      interfacePath,
+				Values:    val,
+				Timestamp: timestamp,
+			}
+
+			if d.OnAggregateMessageReceived != nil {
+				d.OnAggregateMessageReceived(d, m)
+			}
+		}
+	}
+}
+
 func (d *Device) handleControlMessages(message string, payload []byte) error {
+	//nolint
 	switch message {
 	case "consumer/properties":
 		return d.handlePurgeProperties(payload)
@@ -187,7 +194,7 @@ func (d *Device) handleControlMessages(message string, payload []byte) error {
 	return nil
 }
 
-func astarteOnConnectHandler(d *Device, client mqtt.Client, sessionPresent bool) {
+func astarteOnConnectHandler(d *Device, sessionPresent bool) {
 	// Generate Introspection first
 	introspection := d.generateDeviceIntrospection()
 
@@ -467,7 +474,7 @@ func getIndividualMappingFromAggregate(astarteInterface interfaces.AstarteInterf
 	return astarteInterface.Mappings[0], nil
 }
 
-func (d *Device) publishMessage(message astarteMessageInfo) error {
+func (d *Device) publishMessage(message astarteMessageInfo) {
 	topic := fmt.Sprintf("%s/%s%s", d.getBaseTopic(), message.InterfaceName, message.Path)
 
 	// MQTT client returns `true` to IsConnected()
@@ -499,8 +506,6 @@ func (d *Device) publishMessage(message astarteMessageInfo) error {
 			}
 		}
 	}
-
-	return nil
 }
 
 func (d *Device) storeMessage(message astarteMessageInfo) {
@@ -616,69 +621,4 @@ func parseBSONPayload(payload []byte) (map[string]interface{}, error) {
 	parsed := map[string]interface{}{}
 	err := bson.Unmarshal(payload, parsed)
 	return parsed, err
-}
-
-func bsonRawValueToInterface(v bson.RawValue, valueType string) (interface{}, error) {
-	switch valueType {
-	case "string":
-		var val string
-		err := v.Unmarshal(val)
-		return val, err
-	case "double":
-		var val float64
-		err := v.Unmarshal(val)
-		return val, err
-	case "integer":
-		var val int32
-		err := v.Unmarshal(val)
-		return val, err
-	case "boolean":
-		var val bool
-		err := v.Unmarshal(val)
-		return val, err
-	case "longinteger":
-		var val int64
-		err := v.Unmarshal(val)
-		return val, err
-	case "binaryblob":
-		var val []byte
-		err := v.Unmarshal(val)
-		return val, err
-	case "datetime":
-		// TODO: verify this is true.
-		var val time.Time
-		err := v.Unmarshal(val)
-		return val, err
-	case "stringarray":
-		var val []string
-		err := v.Unmarshal(val)
-		return val, err
-	case "doublearray":
-		var val []float64
-		err := v.Unmarshal(val)
-		return val, err
-	case "integerarray":
-		var val []int32
-		err := v.Unmarshal(val)
-		return val, err
-	case "booleanarray":
-		var val []bool
-		err := v.Unmarshal(val)
-		return val, err
-	case "longintegerarray":
-		var val []int64
-		err := v.Unmarshal(val)
-		return val, err
-	case "binaryblobarray":
-		var val [][]byte
-		err := v.Unmarshal(val)
-		return val, err
-	case "datetimearray":
-		// TODO: verify this is true.
-		var val []time.Time
-		err := v.Unmarshal(val)
-		return val, err
-	}
-
-	return nil, fmt.Errorf("Could not decode for type %s", valueType)
 }
