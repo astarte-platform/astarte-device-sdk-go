@@ -71,8 +71,8 @@ func (suite *EndToEndSuite) SetupSuite() {
 	suite.realm = os.Getenv("E2E_REALM")
 	suite.deviceID = os.Getenv("E2E_DEVICE_ID")
 	suite.credentialsSecret = os.Getenv("E2E_CREDENTIALS_SECRET")
-	suite.devicePersistencyDir = "test/persistency"
-	suite.interfaceDirectory = "test/interfaces"
+	suite.devicePersistencyDir, _ = ioutil.TempDir("", "astarte2e")
+	suite.interfaceDirectory = os.Getenv("E2E_INTERFACES_DIR")
 
 	suite.setupAPIClient()
 	suite.setupDevice()
@@ -81,6 +81,7 @@ func (suite *EndToEndSuite) SetupSuite() {
 func (suite *EndToEndSuite) TearDownSuite() {
 	suite.d.Disconnect(make(chan<- error))
 	time.Sleep(3 * time.Second)
+	os.RemoveAll(suite.devicePersistencyDir)
 }
 
 func (suite *EndToEndSuite) TestDatastreamIndividualDevice() {
@@ -255,17 +256,14 @@ func toDate(value interface{}) time.Time {
 
 func loadInterfaces(d *device.Device, interfaceDirectory string) error {
 	files, _ := ioutil.ReadDir(interfaceDirectory)
+	var err error
 	for _, f := range files {
 		fmt.Println(f.Name())
-		byteValue, err := ioutil.ReadFile(interfaceDirectory + "/" + f.Name())
-		if err != nil {
+		var iface interfaces.AstarteInterface
+		if iface, err = interfaces.ParseInterfaceFromFile(interfaceDirectory + "/" + f.Name()); err != nil {
 			return err
 		}
-		iface := interfaces.AstarteInterface{}
-		if iface, err = interfaces.ParseInterface(byteValue); err != nil {
-			return err
-		}
-		if err := d.AddInterface(iface); err != nil {
+		if err = d.AddInterface(iface); err != nil {
 			return err
 		}
 	}

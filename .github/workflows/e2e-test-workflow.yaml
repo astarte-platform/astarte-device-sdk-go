@@ -9,7 +9,7 @@ on:
 
 jobs:
   e2e-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -24,12 +24,13 @@ jobs:
         run: |
           DEVICE_ID=$(astartectl utils device-id generate-random)
           echo "E2E_DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
-          CREDENTIALS_SECRET=$(astartectl pairing agent register --compact-output "$DEVICE_ID")
+          CREDENTIALS_SECRET=$(astartectl pairing agent register --compact-output -- "$DEVICE_ID")
           echo "E2E_CREDENTIALS_SECRET=$CREDENTIALS_SECRET" >> $GITHUB_ENV
           JWT=$(astartectl utils gen-jwt all-realm-apis)
           echo "E2E_JWT=$JWT" >> $GITHUB_ENV
           echo "E2E_REALM=test" >> $GITHUB_ENV
           echo "E2E_ASTARTE_URL=https://api.autotest.astarte-platform.org" >> $GITHUB_ENV
+          echo "E2E_INTERFACES_DIR=$GITHUB_WORKSPACE/e2e_tests/test/interfaces" >> $GITHUB_ENV
       - name: Setup go
         uses: actions/setup-go@v2
         with:
@@ -42,8 +43,7 @@ jobs:
           echo $E2E_JWT
           echo $E2E_REALM
           echo $E2E_ASTARTE_URL
-          go test -v -timeout 20m -coverprofile=coverage.txt -covermode=atomic
-        working-directory: ./e2e_tests 
-        shell: bash
+          echo $E2E_INTERFACES_DIR
+          go test -v -race -timeout 20m -coverprofile=coverage.txt -covermode=atomic -coverpkg=./... ./...
       - name: Upload coverage report
         uses: codecov/codecov-action@v2

@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	mqtt "github.com/ispirata/paho.mqtt.golang"
 	"github.com/astarte-platform/astarte-go/interfaces"
+	mqtt "github.com/ispirata/paho.mqtt.golang"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -325,7 +325,7 @@ func (d *Device) SetProperty(interfaceName, path string, value interface{}) erro
 	iface, ok := d.interfaces[interfaceName]
 	if ok {
 		if iface.Type != interfaces.PropertiesType {
-			return fmt.Errorf("SetProperty can be used only on Property Interfaces", interfaceName)
+			return fmt.Errorf("SetProperty can be used only on Property Interfaces, used on %s instead", interfaceName)
 		}
 		// Validate the message
 		if err := interfaces.ValidateIndividualMessage(iface, path, value); err != nil {
@@ -354,7 +354,7 @@ func (d *Device) UnsetProperty(interfaceName, path string) error {
 	iface, ok := d.interfaces[interfaceName]
 	if ok {
 		if iface.Type != interfaces.PropertiesType {
-			return fmt.Errorf("UnsetProperty can be used only on Property Interfaces", interfaceName)
+			return fmt.Errorf("UnsetProperty can be used only on Property Interfaces, used on %s instead", interfaceName)
 		}
 		// Validate the path and whether it can allow unset
 		mapping, err := interfaces.InterfaceMappingFromPath(iface, path)
