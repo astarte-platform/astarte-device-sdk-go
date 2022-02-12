@@ -21,11 +21,11 @@ import (
 	"io/ioutil"
 	"path/filepath"
 
-	mqtt "github.com/ispirata/paho.mqtt.golang"
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
 	"github.com/astarte-platform/astarte-go/misc"
 	backoff "github.com/cenkalti/backoff/v4"
+	mqtt "github.com/ispirata/paho.mqtt.golang"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -115,7 +115,6 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 	}
 
 	if err := d.migrateDb(); err != nil {
-		errors.New("Database migration failed")
 		return nil, err
 	}
 
@@ -123,6 +122,7 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 }
 
 // Connect connects the device through a goroutine
+//nolint
 func (d *Device) Connect(result chan<- error) {
 	go func(result chan<- error) {
 		// Are we connected already?
@@ -177,7 +177,7 @@ func (d *Device) Connect(result chan<- error) {
 		}
 
 		// initialize the client
-		if err := d.initializeMQTTClient(); err != nil {
+		if err = d.initializeMQTTClient(); err != nil {
 			if result != nil {
 				result <- err
 			}

@@ -97,7 +97,9 @@ func (d *Device) getTLSConfig() (*tls.Config, error) {
 
 func (d *Device) getCryptoDir() string {
 	cryptoDir := filepath.Join(d.persistencyDir, "crypto")
-	os.MkdirAll(cryptoDir, 0700)
+	if err := os.MkdirAll(cryptoDir, 0700); err != nil {
+		fmt.Println("WARNING - could not access crypto dir!")
+	}
 	return cryptoDir
 }
 
@@ -183,7 +185,9 @@ func (d *Device) ensureKeyPair() error {
 
 	// We need to generate the key
 	// First of all, clear the crypto dir, just to be sure.
-	d.ClearCrypto()
+	if err := d.ClearCrypto(); err != nil {
+		return err
+	}
 
 	reader := rand.Reader
 	// Certificates are short-lived, 2048 is fine.
