@@ -23,6 +23,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,22 @@ var (
 		"/test/longintegerarray": []int64{math.MaxInt32 + 1, math.MaxInt32 + 2},
 		"/test/string":           "hello",
 		"/test/stringarray":      []string{"hello", "world"},
+	}
+	expectedDatastreamObject = map[string]interface{}{
+		"binaryblob":       []byte{1, 2, 3, 4, 5},
+		"binaryblobarray":  [][]byte{{12, 23, 34, 45, 56}, {1, 2, 3, 4, 5}},
+		"boolean":          true,
+		"booleanarray":     []bool{true, false, true},
+		"datetime":         time.Date(1996, time.April, 30, 0, 0, 0, 0, time.UTC),
+		"datetimearray":    []time.Time{time.Date(1996, time.April, 30, 0, 0, 0, 0, time.UTC), time.Date(1996, time.April, 30, 0, 0, 0, 0, time.UTC)},
+		"double":           1.1,
+		"doublearray":      []float64{1.1, 2.0, 3.3, 4.5},
+		"integer":          2,
+		"integerarray":     []int{1, 2, 3},
+		"longinteger":      int64(math.MaxInt32 + 1),
+		"longintegerarray": []int64{math.MaxInt32 + 1, math.MaxInt32 + 2},
+		"string":           "hello",
+		"stringarray":      []string{"hello", "world"},
 	}
 	expectedProperties = map[string]interface{}{
 		"/test/binaryblob":       []byte{1, 2, 3, 4, 5},
@@ -107,7 +124,7 @@ func (suite *EndToEndSuite) TestDatastreamIndividualDevice() {
 	// send everything
 	for k, v := range expectedDatastreamIndividual {
 		if err := suite.d.SendIndividualMessageWithTimestamp("org.astarte-platform.device.individual.datastream.Everything", k, v, time.Now()); err != nil {
-			suite.Fail("Error sending message", err)
+			suite.Fail("Error sending individual message", err)
 		}
 		fmt.Printf("Sent %v on %s\n", v, k)
 		time.Sleep(1 * time.Second)
@@ -124,6 +141,36 @@ func (suite *EndToEndSuite) TestDatastreamIndividualDevice() {
 		received[k] = individualValueToAstarteType(v.Value, astarteType)
 	}
 	for path, expectedValue := range expectedDatastreamIndividual {
+		if !suite.Equal(expectedValue, received[path]) {
+			fmt.Printf("Expected: %v : %v  ---- received %v : %v\n",
+				expectedValue, reflect.TypeOf(expectedValue),
+				received[path], reflect.TypeOf(received[path]))
+			suite.Fail("Sent value different from received value", expectedValue, received[path])
+		}
+	}
+}
+
+func (suite *EndToEndSuite) TestDatastreamObjectDevice() {
+	data := expectedDatastreamObject
+	// send everything
+	if err := suite.d.SendAggregateMessageWithTimestamp("org.astarte-platform.device.object.datastream.Everything", "/test", data, time.Now()); err != nil {
+		suite.Fail("Error sending aggregate message", err)
+	}
+	fmt.Printf("Sent %v on %s\n", data, "/test")
+	time.Sleep(1 * time.Second)
+
+	res, err := suite.astarteAPIClient.AppEngine.GetAggregateParametricDatastreamSnapshot(suite.realm, suite.deviceID, client.AstarteDeviceID, "org.astarte-platform.device.object.datastream.Everything")
+	if err != nil {
+		suite.Fail("Error querying Astarte", err)
+	}
+	result := res["/test"].Values
+
+	received := map[string]interface{}{}
+	for _, k := range result.Keys() {
+		value, _ := result.Get(k)
+		received[k] = individualValueToAstarteType(value, k)
+	}
+	for path, expectedValue := range expectedDatastreamObject {
 		if !suite.Equal(expectedValue, received[path]) {
 			fmt.Printf("Expected: %v : %v  ---- received %v : %v\n",
 				expectedValue, reflect.TypeOf(expectedValue),
@@ -273,12 +320,11 @@ func individualValueToAstarteType(value interface{}, astarteType string) interfa
 		}
 		return n
 	case "longinteger":
-		return int64(value.(float64))
+		return toLongInteger(value)
 	case "longintegerarray":
 		n := []int64{}
 		for _, v := range value.([]interface{}) {
-			intV := int64(v.(float64))
-			n = append(n, intV)
+			n = append(n, toLongInteger(v))
 		}
 		return n
 	case "boolean":
@@ -316,6 +362,17 @@ func individualValueToAstarteType(value interface{}, astarteType string) interfa
 func toDate(value interface{}) time.Time {
 	date, _ := time.ParseInLocation(time.RFC3339, fmt.Sprintf("%s", value), time.UTC)
 	return date
+}
+
+func toLongInteger(value interface{}) int64 {
+	switch v := value.(type) {
+	case string:
+		n, _ := strconv.ParseInt(v, 10, 64)
+		return n
+	// Assuming that, if it is not a string, it can be casted to a float64
+	default:
+		return int64(v.(float64))
+	}
 }
 
 func loadInterfaces(d *device.Device, interfaceDirectory string) error {
