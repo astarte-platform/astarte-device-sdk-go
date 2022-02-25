@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
@@ -224,6 +225,39 @@ func (suite *EndToEndSuite) TestPropertiesIndividualDevice() {
 	}
 	suite.Empty(res2, "Properties not unset")
 }
+func (suite *EndToEndSuite) TestDatastreamIndividualServer() {
+	//push data to Astarte, OnIndividualMessageReceived will take care of comparison with expected values
+	for k, v := range expectedDatastreamIndividual {
+		if err := suite.astarteAPIClient.AppEngine.SendDatastream(suite.realm, suite.deviceID, client.AstarteDeviceID,
+			"org.astarte-platform.server.individual.datastream.Everything", k, v); err != nil {
+			suite.Fail("Error pushing message", err)
+		}
+		fmt.Printf("Pushed %v on %s\n", v, k)
+	}
+}
+
+func (suite *EndToEndSuite) checkReceivedDatastreamIndividualServer(d *device.Device, message device.IndividualMessage) {
+	if message.Interface.Name != "org.astarte-platform.server.individual.datastream.Everything" {
+		suite.Fail("Received message from unexpected interface", message.Interface.Name)
+	}
+	found := false
+	for expectedPath, expectedValue := range expectedDatastreamIndividual {
+		if expectedPath == message.Path {
+			found = true
+			astarteType := strings.Split(expectedPath, "/")[2]
+			receivedValue := primitiveValueToAstarteType(message.Value, astarteType)
+			if !suite.Equal(expectedValue, receivedValue) {
+				fmt.Printf("Expected: %v : %v  ---- received %v : %v\n",
+					expectedValue, reflect.TypeOf(expectedValue),
+					receivedValue, reflect.TypeOf(receivedValue))
+				suite.Fail("Sent value different from received value", expectedValue, receivedValue)
+			}
+		}
+	}
+	if !found {
+		suite.Fail("Received message from unexpected path", message.Path)
+	}
+}
 
 // In order for 'go test' to run this suite, we need to create
 // a normal test function and pass our suite to suite.Run
@@ -267,9 +301,8 @@ func (suite *EndToEndSuite) setupDevice() {
 	d.OnConnectionStateChanged = func(d *device.Device, state bool) {
 		fmt.Printf("Device connection state: %t\n", state)
 	}
-	d.OnIndividualMessageReceived = func(d *device.Device, message device.IndividualMessage) {
-		fmt.Printf("Individual message received: %v\n", message)
-	}
+	d.OnIndividualMessageReceived = suite.checkReceivedDatastreamIndividualServer
+
 	d.OnAggregateMessageReceived = func(d *device.Device, message device.AggregateMessage) {
 		fmt.Printf("Aggregate message received: %v\n", message)
 	}
@@ -359,6 +392,81 @@ func individualValueToAstarteType(value interface{}, astarteType string) interfa
 	}
 }
 
+//nolint
+func primitiveValueToAstarteType(value interface{}, astarteType string) interface{} {
+	// cast like there's no tomorrow yolo
+	switch astarteType {
+	case "datetime":
+		return value.(primitive.DateTime).Time().UTC()
+	case "datetimearray":
+		n := []time.Time{}
+		pa, _ := value.(primitive.A)
+		for _, v := range []interface{}(pa) {
+			n = append(n, v.(primitive.DateTime).Time().UTC())
+		}
+		return n
+	case "integer":
+		return int(value.(int32))
+	case "integerarray":
+		n := []int{}
+		pa, _ := value.(primitive.A)
+		for _, v := range []interface{}(pa) {
+			n = append(n, int(v.(int32)))
+		}
+		return n
+	case "double":
+		return value.(float64)
+	case "doublearray":
+		n := []float64{}
+		pa, _ := value.(primitive.A)
+		for _, v := range []interface{}(pa) {
+			n = append(n, toFloat64(v))
+		}
+		return n
+	case "longinteger":
+		return value.(int64)
+	case "longintegerarray":
+		n := []int64{}
+		pa, _ := value.(primitive.A)
+		for _, v := range []interface{}(pa) {
+			intV := v.(int64)
+			n = append(n, intV)
+		}
+		return n
+	case "boolean":
+		return value.(bool)
+	case "booleanarray":
+		n := []bool{}
+		pa, _ := value.(primitive.A)
+		for _, v := range []interface{}(pa) {
+			n = append(n, v.(bool))
+		}
+		return n
+	case "string":
+		return value.(string)
+	case "stringarray":
+		n := []string{}
+		pa, _ := value.(primitive.A)
+		for _, v := range []interface{}(pa) {
+			n = append(n, v.(string))
+		}
+		return n
+	case "binaryblob":
+		return value.(primitive.Binary).Data
+	case "binaryblobarray":
+		n := [][]byte{}
+		pa, _ := value.(primitive.A)
+		for _, v := range []interface{}(pa) {
+			decoded := v.(primitive.Binary).Data
+			n = append(n, decoded)
+		}
+		return n
+	default:
+		// can't happen because we checked all astarte types
+		return nil
+	}
+}
+
 func toDate(value interface{}) time.Time {
 	date, _ := time.ParseInLocation(time.RFC3339, fmt.Sprintf("%s", value), time.UTC)
 	return date
@@ -372,6 +480,15 @@ func toLongInteger(value interface{}) int64 {
 	// Assuming that, if it is not a string, it can be casted to a float64
 	default:
 		return int64(v.(float64))
+	}
+}
+func toFloat64(value interface{}) float64 {
+	switch v := value.(type) {
+	case int32:
+		return float64(v)
+	// Assuming that, if it is not a string, it can be casted to a float64
+	default:
+		return v.(float64)
 	}
 }
 
