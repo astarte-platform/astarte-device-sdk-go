@@ -1,0 +1,79 @@
+{
+    "interface_name": "org.astarte-platform.device.individual.properties.Everything",
+    "version_major": 0,
+    "version_minor": 1,
+    "type": "properties",
+    "ownership": "device",
+    "mappings": [
+        {
+            "endpoint": "/%{sensor_id}/binaryblob",
+            "type": "binaryblob",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/binaryblobarray",
+            "type": "binaryblobarray",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/boolean",
+            "type": "boolean",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/booleanarray",
+            "type": "booleanarray",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/datetime",
+            "type": "datetime",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/datetimearray",
+            "type": "datetimearray",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/double",
+            "type": "double",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/doublearray",
+            "type": "doublearray",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/integer",
+            "type": "integer",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/integerarray",
+            "type": "integerarray",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/longinteger",
+            "type": "longinteger",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/longintegerarray",
+            "type": "longintegerarray",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/string",
+            "type": "string",
+            "allow_unset": true
+        },
+        {
+            "endpoint": "/%{sensor_id}/stringarray",
+            "type": "stringarray",
+            "allow_unset": true
+        }
+    ]
+}
