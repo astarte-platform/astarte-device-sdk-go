@@ -15,18 +15,18 @@
 package device
 
 import (
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
 	"github.com/astarte-platform/astarte-go/misc"
 	backoff "github.com/cenkalti/backoff/v4"
 	mqtt "github.com/ispirata/paho.mqtt.golang"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -36,70 +36,95 @@ const (
 
 // Device is the base struct for Astarte Devices
 type Device struct {
-	deviceID                string
-	realm                   string
-	persistencyDir          string
-	m                       mqtt.Client
-	interfaces              map[string]interfaces.AstarteInterface
-	astarteAPIClient        *client.Client
-	brokerURL               string
-	db                      *gorm.DB
-	messageQueue            chan astarteMessageInfo
-	isSendingStoredMessages bool
-	volatileMessages        []astarteMessageInfo
-	lastSentIntrospection   string
-	// MaxInflightMessages is the maximum number of messages that can be in publishing channel at any given time
-	// before adding messages becomes blocking. Defaults to 100.
-	MaxInflightMessages int
-	// IgnoreSSLErrors allows the device to ignore client SSL errors during connection.
-	// Useful if you're using the device to connect to a test instance of Astarte with self signed certificates,
-	// it is not recommended to leave this to `true` in production. Defaults to `false`.
-	IgnoreSSLErrors bool
-	// AutoReconnect sets whether the device should reconnect automatically if it loses the connection
-	// after establishing it. Defaults to false.
-	AutoReconnect bool
-	// ConnectRetry sets whether the device should retry to connect if the first connection
-	// fails. Defaults to false.
-	ConnectRetry bool
-	// MaxRetries sets the number of attempts for the device to establish the first connection.
-	// If ConnectRetry is false, MaxRetries will be ignored. Defaults to 10.
-	MaxRetries int
-	// RootCAs, when not nil, sets a custom set of Root CAs to trust against the broker
-	RootCAs                     *x509.CertPool
+	deviceID                    string
+	realm                       string
+	m                           mqtt.Client
+	interfaces                  map[string]interfaces.AstarteInterface
+	astarteAPIClient            *client.Client
+	brokerURL                   string
+	db                          *gorm.DB
+	messageQueue                chan astarteMessageInfo
+	isSendingStoredMessages     bool
+	volatileMessages            []astarteMessageInfo
+	lastSentIntrospection       string
+	opts                        DeviceOptions
 	OnIndividualMessageReceived func(*Device, IndividualMessage)
 	OnAggregateMessageReceived  func(*Device, AggregateMessage)
 	OnErrors                    func(*Device, error)
 	OnConnectionStateChanged    func(*Device, bool)
 }
 
-// NewDevice creates a new Device
-func NewDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string) (*Device, error) {
-	// Create temporary directory for the persistent data
-	// TODO: How to clean this up?
-	persistencyDir, err := ioutil.TempDir("", deviceID)
-	if err != nil {
-		return nil, err
-	}
-
-	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, persistencyDir)
+// NewDevice creates a new Device without persistency.
+// NOTE: This constructor is NOT safe to use in production, as all persistency is turned off. When
+// doing so, a number of features won't be available. Please use NewDeviceWithPersistency or
+// NewDeviceWithOptions instead.
+//
+// Deprecated: due to its ambiguousness, this constructor will be removed or changed in the future.
+func NewDevice(deviceID, realm, credentialsSecret, pairingBaseURL string) (*Device, error) {
+	opts := NewDeviceOptions()
+	opts.UseMqttStore = false
+	opts.UseDatabase = false
+	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, opts)
 }
 
-// NewDeviceWithPersistency creates a new Device with a known persistency directory
-func NewDeviceWithPersistency(deviceID, realm, credentialsSecret string, pairingBaseURL string, persistencyDir string) (*Device, error) {
-	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, persistencyDir)
+// NewDeviceWithPersistency creates a new Device with a known persistency directory and an SQLite database
+// which will be created and stored within that directory. It sticks to sane defaults and it is the right
+// choice in most cases. Please note that when creating a device like this,
+// you must compile your executable with CGO enabled due to SQLite requirements.
+// More advanced configuration can be provided when creating a device with NewDeviceWithOptions.
+func NewDeviceWithPersistency(deviceID, realm, credentialsSecret, pairingBaseURL, persistencyDir string) (*Device, error) {
+	opts := NewDeviceOptions()
+	opts.PersistencyDir = persistencyDir
+	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, opts)
 }
 
-func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string, persistencyDir string) (*Device, error) {
+// NewDeviceWithOptions creates a new Device with a set of options. It is meant to be used in
+// those cases where NewDeviceWithPersistency doesn't provide you with a satisfactory configuration.
+// Please refer to DeviceOptions documentation for all details.
+// NewDeviceWithOptions will also return an error and will fail if the provided options are invalid or
+// incompatible (e.g.: when requiring a default database without a persistency directory).
+// If you are unsure about what some of these options mean, it is advised to stick to NewDeviceWithPersistency.
+func NewDeviceWithOptions(deviceID, realm, credentialsSecret, pairingBaseURL string, opts DeviceOptions) (*Device, error) {
+	return newDevice(deviceID, realm, credentialsSecret, pairingBaseURL, opts)
+}
+
+func newDevice(deviceID, realm, credentialsSecret, pairingBaseURL string, opts DeviceOptions) (*Device, error) {
 	if !misc.IsValidAstarteDeviceID(deviceID) {
 		return nil, fmt.Errorf("%s is not a valid Device ID", deviceID)
+	}
+
+	if err := opts.validate(); err != nil {
+		return nil, err
 	}
 
 	d := new(Device)
 	d.deviceID = deviceID
 	d.realm = realm
-	d.persistencyDir = persistencyDir
 	d.interfaces = map[string]interfaces.AstarteInterface{}
-	d.MaxInflightMessages = 100
+	d.opts = opts
+
+	if len(opts.CryptoDir) == 0 {
+		if len(opts.PersistencyDir) > 0 {
+			d.opts.CryptoDir = filepath.Join(d.opts.PersistencyDir, "crypto")
+		} else {
+			// Use a temporary directory then
+			tempDir, err := ioutil.TempDir("", deviceID)
+			if err != nil {
+				return nil, err
+			}
+			d.opts.CryptoDir = filepath.Join(tempDir, "crypto")
+
+			// Add a finalizer for the temporary directory
+			runtime.SetFinalizer(d, func(d *Device) {
+				os.RemoveAll(tempDir)
+			})
+		}
+
+		// Always create a subdir with the right set of permissions.
+		if err := os.MkdirAll(d.opts.CryptoDir, 0700); err != nil {
+			return nil, err
+		}
+	}
 
 	var err error
 	d.astarteAPIClient, err = client.NewClientWithIndividualURLs(map[misc.AstarteService]string{misc.Pairing: pairingBaseURL}, nil)
@@ -108,12 +133,17 @@ func newDevice(deviceID, realm, credentialsSecret string, pairingBaseURL string,
 	}
 	d.astarteAPIClient.SetToken(credentialsSecret)
 
-	dbpath := filepath.Join(d.getDbDir(), "persistency.db")
-	d.db, err = gorm.Open(sqlite.Open(dbpath), &gorm.Config{})
-	if err != nil {
-		fmt.Println("failed to connect to database")
+	// If a default database was requested, manage the default SQLite DB
+	if opts.UseDatabase {
+		d.db, err = d.getDefaultDB()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		d.db = opts.Database
 	}
 
+	// migrateDb, like all DB functions, will just blink if no DB is available
 	if err := d.migrateDb(); err != nil {
 		return nil, err
 	}
@@ -136,7 +166,7 @@ func (d *Device) Connect(result chan<- error) {
 		// At least one interface available?
 		if len(d.interfaces) == 0 {
 			if result != nil {
-				result <- errors.New("Add at least an interface before attempting to connect")
+				result <- errors.New("add at least an interface before attempting to connect")
 			}
 			return
 		}
@@ -151,7 +181,7 @@ func (d *Device) Connect(result chan<- error) {
 		err := backoff.Retry(ensureBrokerURLOperation, policy)
 		if err != nil {
 			if result != nil {
-				if d.ConnectRetry {
+				if d.opts.ConnectRetry {
 					errorMsg := fmt.Sprintf("Cannot establish a connection after %d attempts.", d.connectionRetryAttempts())
 					result <- errors.New(errorMsg)
 				} else {
@@ -202,7 +232,7 @@ func (d *Device) Connect(result chan<- error) {
 		}
 
 		// Now that the client is up and running, we can start sending messages
-		d.messageQueue = make(chan astarteMessageInfo, d.MaxInflightMessages)
+		d.messageQueue = make(chan astarteMessageInfo, d.opts.MaxInflightMessages)
 		go d.sendLoop()
 
 		// All good: notify, and our routine is over.
@@ -214,9 +244,9 @@ func (d *Device) Connect(result chan<- error) {
 
 func (d *Device) connectionRetryAttempts() int {
 	switch {
-	case d.ConnectRetry && d.MaxRetries > 0:
-		return d.MaxRetries
-	case d.ConnectRetry:
+	case d.opts.ConnectRetry && d.opts.MaxRetries > 0:
+		return d.opts.MaxRetries
+	case d.opts.ConnectRetry:
 		return DefaultInitialConnectionAttempts
 	default:
 		return 0

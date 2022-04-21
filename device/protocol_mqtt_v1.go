@@ -34,14 +34,17 @@ func (d *Device) getBaseTopic() string {
 }
 
 func (d *Device) initializeMQTTClient() error {
-	s := mqtt.NewFileStore(filepath.Join(d.persistencyDir, "mqttstore"))
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(d.brokerURL)
-	opts.SetAutoReconnect(d.AutoReconnect)
-	opts.SetStore(s)
+	opts.SetAutoReconnect(d.opts.AutoReconnect)
 	opts.SetClientID(fmt.Sprintf("%s/%s", d.realm, d.deviceID))
 	opts.SetConnectTimeout(30 * time.Second)
 	opts.SetCleanSession(false)
+
+	if d.opts.UseMqttStore {
+		s := mqtt.NewFileStore(filepath.Join(d.opts.PersistencyDir, "mqttstore"))
+		opts.SetStore(s)
+	}
 
 	tlsConfig, err := d.getTLSConfig()
 	if err != nil {
@@ -265,14 +268,14 @@ func (d *Device) SendIndividualMessageWithTimestamp(interfaceName, interfacePath
 	iface, ok := d.interfaces[interfaceName]
 	if ok {
 		if iface.Aggregation != interfaces.IndividualAggregation {
-			return fmt.Errorf("Interface %s hasn't individual aggregation", interfaceName)
+			return fmt.Errorf("interface %s hasn't individual aggregation", interfaceName)
 		}
 		// Validate the message
 		if err := interfaces.ValidateIndividualMessage(iface, interfacePath, value); err != nil {
 			return err
 		}
 	} else {
-		return fmt.Errorf("Interface %s not registered", interfaceName)
+		return fmt.Errorf("interface %s not registered", interfaceName)
 	}
 	// We are good to go. Let's add the message to the channel.
 	return d.enqueueMqttV1Message(iface, interfacePath, value, timestamp)
@@ -296,14 +299,14 @@ func (d *Device) SendAggregateMessageWithTimestamp(interfaceName, interfacePath 
 	iface, ok := d.interfaces[interfaceName]
 	if ok {
 		if iface.Aggregation != interfaces.ObjectAggregation {
-			return fmt.Errorf("Interface %s hasn't object aggregation", iface.Name)
+			return fmt.Errorf("interface %s hasn't object aggregation", iface.Name)
 		}
 		// Validate the message
 		if err := interfaces.ValidateAggregateMessage(iface, interfacePath, values); err != nil {
 			return err
 		}
 	} else {
-		return fmt.Errorf("Interface %s not registered", interfaceName)
+		return fmt.Errorf("interface %s not registered", interfaceName)
 	}
 
 	// We are good to go. Let's add the message to the channel.
@@ -346,7 +349,7 @@ func (d *Device) SetProperty(interfaceName, path string, value interface{}) erro
 			return nil
 		}
 	} else {
-		return fmt.Errorf("Interface %s not registered", interfaceName)
+		return fmt.Errorf("interface %s not registered", interfaceName)
 	}
 	// We are good to go. Let's add the message to the channel.
 	return d.enqueueMqttV1Message(iface, path, value, time.Time{})
@@ -372,7 +375,7 @@ func (d *Device) UnsetProperty(interfaceName, path string) error {
 			return errors.New("unset can be called only on properties with allowUnset")
 		}
 	} else {
-		return fmt.Errorf("Interface %s not registered", interfaceName)
+		return fmt.Errorf("interface %s not registered", interfaceName)
 	}
 	// We are good to go. Let's add the message to the channel.
 	// This is a delete property, so a special message: empty payload
@@ -605,7 +608,7 @@ func (d *Device) sendDeviceProperties() error {
 			t := d.m.Publish(topic, 2, false, property.RawValue)
 			fmt.Printf("Sending device property %s\n", topic)
 			if !t.WaitTimeout(5 * time.Second) {
-				return errors.New("Timed out while sending device property")
+				return errors.New("timed out while sending device property")
 			}
 			// If an error occurred, let's return and see what's in store
 			if t.Error() != nil {

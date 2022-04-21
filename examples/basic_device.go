@@ -34,6 +34,7 @@ func ExecuteBasicDevice() {
 	credentialsSecret := "something"
 	deviceRealm := "demo"
 	apiEndpoint := "https://api.some.astarte.com/pairing"
+	persistencyDir := "persistency/"
 
 	// Compute device ID
 	deviceID, err := misc.GetNamespacedAstarteDeviceID(uuidNamespace, []byte(objectID))
@@ -43,7 +44,7 @@ func ExecuteBasicDevice() {
 	}
 
 	// Create device
-	d, err := device.NewDevice(deviceID, deviceRealm, credentialsSecret, apiEndpoint)
+	d, err := device.NewDeviceWithPersistency(deviceID, deviceRealm, credentialsSecret, apiEndpoint, persistencyDir)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
@@ -66,10 +67,7 @@ func ExecuteBasicDevice() {
 		os.Exit(1)
 	}
 
-	// Set up device options and callbacks
-	d.AutoReconnect = true
-	d.ConnectRetry = true
-	d.MaxRetries = 10
+	// Set up device callbacks
 	d.OnConnectionStateChanged = func(d *device.Device, state bool) {
 		fmt.Printf("Device connection state: %t\n", state)
 	}
