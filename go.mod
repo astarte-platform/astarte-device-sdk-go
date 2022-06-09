@@ -3,7 +3,7 @@ module github.com/astarte-platform/astarte-device-sdk-go
 go 1.17
 
 require (
-	github.com/astarte-platform/astarte-go v0.90.3
+	github.com/astarte-platform/astarte-go v0.90.4
 	github.com/cenkalti/backoff/v4 v4.1.2
 	github.com/ispirata/paho.mqtt.golang v1.3.91-0.20220121155423-6e36d43b2ec9
 	github.com/stretchr/testify v1.7.0
