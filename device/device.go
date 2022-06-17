@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"github.com/astarte-platform/astarte-go/client"
 	"github.com/astarte-platform/astarte-go/interfaces"
@@ -34,6 +35,11 @@ const (
 	DefaultInitialConnectionAttempts = 10
 )
 
+type messageQueue struct {
+	sync.Mutex
+	queue chan astarteMessageInfo
+}
+
 // Device is the base struct for Astarte Devices
 type Device struct {
 	deviceID                    string
@@ -43,7 +49,7 @@ type Device struct {
 	astarteAPIClient            *client.Client
 	brokerURL                   string
 	db                          *gorm.DB
-	messageQueue                chan astarteMessageInfo
+	inflightMessages            messageQueue
 	isSendingStoredMessages     bool
 	volatileMessages            []astarteMessageInfo
 	lastSentIntrospection       string
@@ -232,7 +238,11 @@ func (d *Device) Connect(result chan<- error) {
 		}
 
 		// Now that the client is up and running, we can start sending messages
-		d.messageQueue = make(chan astarteMessageInfo, d.opts.MaxInflightMessages)
+		d.inflightMessages.queue = make(chan astarteMessageInfo, d.opts.MaxInflightMessages)
+		// When initialized, mutexes are unlocked (see https://pkg.go.dev/sync#Mutex),
+		// so we lock it in order to allow publishing messages
+		// only if introspection has already been sent
+		d.inflightMessages.Lock()
 		go d.sendLoop()
 
 		// All good: notify, and our routine is over.

@@ -57,6 +57,8 @@ func (d *Device) initializeMQTTClient() error {
 	})
 
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
+		// If connection is lost, we should stop dequeuing messages from the channel
+		d.inflightMessages.Lock()
 		if d.OnErrors != nil {
 			d.OnErrors(d, err)
 		}
@@ -253,6 +255,9 @@ func astarteOnConnectHandler(d *Device, sessionPresent bool) {
 		}
 	}
 
+	// Since control messages have been sent, we allow to send data
+	d.inflightMessages.Unlock()
+
 	// If some messages must be retried, do so
 	d.resendFailedMessages()
 
@@ -384,8 +389,10 @@ func (d *Device) UnsetProperty(interfaceName, path string) error {
 
 // The main publishing loop: retrieves messages from the publishing channel and sends them one at a time, in order
 func (d *Device) sendLoop() {
-	for next := range d.messageQueue {
-		d.publishMessage(next)
+	for {
+		d.inflightMessages.Lock()
+		d.publishMessage(<-d.inflightMessages.queue)
+		d.inflightMessages.Unlock()
 	}
 }
 
@@ -463,7 +470,7 @@ func (d *Device) enqueueRawMqttV1Message(astarteInterface interfaces.AstarteInte
 		fmt.Println("Sending previously stored messages with non-discard retention, the current message may be scheduled later")
 	}
 	message := makeAstarteMessageInfo(expiry, retention, astarteInterface.Name, interfacePath, astarteInterface.MajorVersion, qos, bsonPayload)
-	d.messageQueue <- message
+	d.inflightMessages.queue <- message
 
 	return nil
 }
