@@ -275,32 +275,10 @@ func (d *Device) IsConnected() bool {
 }
 
 // AddInterface adds an interface to the device. The interface must be loaded with ParseInterface
-// from the astarte-go/interfaces package.
-// AddInterface returns `nil` if the interface was loaded successfully, or a corresponding error
-// otherwise (e.g. interface validation failed).
+// from the astarte-go/interfaces package, which also ensures that the interface is valid.
+// The return value should be ignored as the error is always `nil` (i.e. AddInterface cannot fail).
+// TODO since the function always returns nil, do not return an error (target release 1.0)
 func (d *Device) AddInterface(astarteInterface interfaces.AstarteInterface) error {
-	if err := astarteInterface.Aggregation.IsValid(); err != nil {
-		return err
-	}
-	if err := astarteInterface.Type.IsValid(); err != nil {
-		return err
-	}
-	if err := astarteInterface.Ownership.IsValid(); err != nil {
-		return err
-	}
-
-	for _, mapping := range astarteInterface.Mappings {
-		if err := mapping.Reliability.IsValid(); err != nil {
-			return err
-		}
-		if err := mapping.Retention.IsValid(); err != nil {
-			return err
-		}
-		if err := mapping.DatabaseRetentionPolicy.IsValid(); err != nil {
-			return err
-		}
-	}
-
 	d.interfaces[astarteInterface.Name] = astarteInterface
 	return nil
 }
