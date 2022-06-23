@@ -117,7 +117,7 @@ func (d *Device) resendStoredMessages() {
 	for _, message := range messages {
 		if !isStoredMessageExpired(message) && !d.isInterfaceOutdatedInIntrospection(message.InterfaceName, message.InterfaceMajor) {
 			// if the message is not expired, try resending it
-			d.messageQueue <- message
+			d.inflightMessages.queue <- message
 		} else {
 			// else, it can be removed
 			d.removeFailedMessageFromStorage(message.StorageId)
@@ -135,7 +135,7 @@ func (d *Device) resendVolatileMessages() {
 		d.volatileMessages = d.volatileMessages[1:]
 		// try resending the message only if it is not expired
 		if !isStoredMessageExpired(message) && !d.isInterfaceOutdatedInIntrospection(message.InterfaceName, message.InterfaceMajor) {
-			d.messageQueue <- message
+			d.inflightMessages.queue <- message
 		}
 	}
 }
