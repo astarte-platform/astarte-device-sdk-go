@@ -213,12 +213,7 @@ func (d *Device) Connect(result chan<- error) {
 		}
 
 		// initialize the client
-		if err = d.initializeMQTTClient(); err != nil {
-			if result != nil {
-				result <- err
-			}
-			return
-		}
+		d.initializeMQTTClient()
 
 		// Wait for the token - we're in a coroutine anyway
 		// If AutoReconnect is enabled, reconnections will be handled by

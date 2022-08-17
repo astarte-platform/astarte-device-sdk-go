@@ -42,7 +42,7 @@ func (d *Device) getBaseTopic() string {
 	return fmt.Sprintf("%s/%s", d.realm, d.deviceID)
 }
 
-func (d *Device) initializeMQTTClient() error {
+func (d *Device) initializeMQTTClient() {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(d.brokerURL)
 	opts.SetAutoReconnect(d.opts.AutoReconnect)
@@ -55,7 +55,7 @@ func (d *Device) initializeMQTTClient() error {
 		opts.SetStore(s)
 	}
 
-	// remove TLS config as it will be handled in the custom connection function
+	// TLS will be handled in the custom connection function
 	opts.SetCustomOpenConnectionFn(d.astarteCustomOpenConnectionFn)
 
 	opts.SetOnConnectHandler(func(client mqtt.Client, sessionPresent bool) {
@@ -78,8 +78,6 @@ func (d *Device) initializeMQTTClient() error {
 	opts.SetDefaultPublishHandler(d.astarteGoSDKDefaultPublishHandler)
 
 	d.m = mqtt.NewClient(opts)
-
-	return nil
 }
 
 func (d *Device) astarteGoSDKDefaultPublishHandler(client mqtt.Client, msg mqtt.Message) {
