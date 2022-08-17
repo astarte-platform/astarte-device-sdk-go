@@ -221,6 +221,8 @@ func (d *Device) Connect(result chan<- error) {
 		}
 
 		// Wait for the token - we're in a coroutine anyway
+		// If AutoReconnect is enabled, reconnections will be handled by
+		// paho's autoreconnect mechanism.
 		policy.Reset()
 		connectOperation := func() error {
 			connectToken := d.m.Connect().(*mqtt.ConnectToken)
