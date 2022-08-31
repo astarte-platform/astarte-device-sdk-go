@@ -44,6 +44,7 @@ func (d *Device) initializeMQTTClient() error {
 	opts.SetClientID(fmt.Sprintf("%s/%s", d.realm, d.deviceID))
 	opts.SetConnectTimeout(30 * time.Second)
 	opts.SetCleanSession(false)
+	opts.SetKeepAlive(d.opts.KeepAlive)
 
 	if d.opts.UseMqttStore {
 		s := mqtt.NewFileStore(filepath.Join(d.opts.PersistencyDir, "mqttstore"))

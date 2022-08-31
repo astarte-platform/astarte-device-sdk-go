@@ -17,6 +17,7 @@ package device
 import (
 	"crypto/x509"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -50,6 +51,12 @@ type DeviceOptions struct {
 	// UseMqttStore defines whether the SDK will use a store or not for the underlying
 	// MQTT client. It will use the PersistencyDir when it is activated.
 	UseMqttStore bool
+
+	// KeepAlive defines the amount of time that the MQTT client
+	// should wait before sending a PING request to the broker. This will
+	// allow the MQTT client to know that a connection has not been lost with Astarte.
+	// Defaults to 30 seconds.
+	KeepAlive time.Duration
 
 	// PersistencyDir is a known path that will be used by the SDK for MQTT
 	// persistency, for the default database if used, and for crypto storage unless
@@ -96,6 +103,7 @@ func NewDeviceOptions() DeviceOptions {
 		AutoReconnect:       true,
 		ConnectRetry:        true,
 		MaxRetries:          10,
+		KeepAlive:           30 * time.Second,
 	}
 }
 
