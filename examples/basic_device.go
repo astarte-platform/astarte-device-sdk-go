@@ -62,7 +62,7 @@ func ExecuteBasicDevice() {
 		os.Exit(1)
 	}
 
-	if err = d.AddInterface(iface); err != nil {
+	if err = d.SafeAddInterface(iface); err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}

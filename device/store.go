@@ -145,9 +145,9 @@ func isStoredMessageExpired(message astarteMessageInfo) bool {
 }
 
 func (d *Device) isInterfaceOutdatedInIntrospection(interfaceName string, interfaceMajor int) bool {
-	for _, astarteInterface := range d.interfaces {
-		if astarteInterface.Name == interfaceName {
-			if astarteInterface.MajorVersion != interfaceMajor {
+	for e := range d.interfaces.IterBuffered() {
+		if e.Key == interfaceName {
+			if e.Val.MajorVersion != interfaceMajor {
 				return true
 			} else {
 				return false
@@ -182,6 +182,14 @@ func (d *Device) removePropertyFromStorageForAllMajors(interfaceName, path strin
 		return
 	}
 	d.db.Where(&property{InterfaceName: interfaceName, Path: path}).Delete(&property{})
+}
+
+func (d *Device) removePropertyFromStorageForAllMajorsAndPaths(interfaceName string) {
+	if d.db == nil {
+		// Nothing to do
+		return
+	}
+	d.db.Where(&property{InterfaceName: interfaceName}).Delete(&property{})
 }
 
 func (d *Device) handlePurgeProperties(payload []byte) error {
@@ -338,9 +346,12 @@ func (d *Device) GetProperty(interfaceName, interfacePath string) (interface{}, 
 	}
 
 	var p property
-	interfaceMajor := d.interfaces[interfaceName].MajorVersion
+	iface, ok := d.interfaces.Get(interfaceName)
+	if !ok {
+		return nil, errors.New("Interface not found")
+	}
 	// since we use all fields of the primary key, we're sure there will be at most one property
-	result := d.db.Where(&property{InterfaceName: interfaceName, Path: interfacePath, InterfaceMajor: interfaceMajor}).Find(&p)
+	result := d.db.Where(&property{InterfaceName: interfaceName, Path: interfacePath, InterfaceMajor: iface.MajorVersion}).Find(&p)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -358,8 +369,11 @@ func (d *Device) GetAllPropertiesForInterface(interfaceName string) (map[string]
 	}
 
 	var properties []property
-	interfaceMajor := d.interfaces[interfaceName].MajorVersion
-	result := d.db.Where(&property{InterfaceName: interfaceName, InterfaceMajor: interfaceMajor}).Find(&properties)
+	iface, ok := d.interfaces.Get(interfaceName)
+	if !ok {
+		return nil, errors.New("Interface not found")
+	}
+	result := d.db.Where(&property{InterfaceName: interfaceName, InterfaceMajor: iface.MajorVersion}).Find(&properties)
 	if result.Error != nil {
 		return nil, result.Error
 	}
