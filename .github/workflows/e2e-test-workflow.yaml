@@ -16,6 +16,8 @@ jobs:
       - name: Setup Astarte Cluster
         id: setup-astarte
         uses: astarte-platform/astarte-cluster-action@v1
+        with:
+          astarte_version: "1.0.4"
       - name: Install interfaces
         run: |
           astartectl realm-management interfaces sync ./e2e_tests/test/interfaces/*.json --non-interactive
