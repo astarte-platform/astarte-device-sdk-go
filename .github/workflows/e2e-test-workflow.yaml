@@ -34,8 +34,8 @@ jobs:
       - name: Setup go
         uses: actions/setup-go@v2
         with:
-          # Ensure we're on Go 1.17
-          go-version: '1.17.x'
+          # Ensure we're on Go 1.18
+          go-version: '1.18.x'
       - name: Run test
         run: |
           echo $E2E_DEVICE_ID

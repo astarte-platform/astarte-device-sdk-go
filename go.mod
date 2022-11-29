@@ -1,6 +1,6 @@
 module github.com/astarte-platform/astarte-device-sdk-go
 
-go 1.17
+go 1.18
 
 require (
 	github.com/astarte-platform/astarte-go v0.90.4
