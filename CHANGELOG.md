@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+## Added
+- Allow to update introspection at runtime.
+- Introduce the `SafeAddInterface` and `SafeRemoveInterface` functions to allow safe
+  update of device introspection.
+
+## Changed
+- Update Go to v1.18.
+
+## Deprecated
+- Deprecate unsafe `AddInterface` and `RemoveInterface` functions.
+
 ## [0.90.2] - 2022-07-04
 ## Added
 - Introduce the `DeviceOptions` struct to expose all possible configuration options for the device.

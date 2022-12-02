@@ -118,7 +118,8 @@ func (d *Device) astarteGoSDKDefaultPublishHandler(client mqtt.Client, msg mqtt.
 			}
 		}
 
-		if iface, ok := d.interfaces[interfaceName]; ok {
+		iface, ok := d.interfaces.Get(interfaceName)
+		if ok {
 			d.processIncomingMessage(iface, tokens, msg.Payload(), parsed, timestamp)
 		} else if d.OnErrors != nil {
 			// Something is off.
@@ -273,8 +274,7 @@ func astarteOnConnectHandler(d *Device, sessionPresent bool) {
 // SendIndividualMessageWithTimestamp adds to the publishing channel a new message towards an individual aggregation interface,
 // with explicit timestamp. This call can be blocking if the channel is full (see `MaxInflightMessages`).
 func (d *Device) SendIndividualMessageWithTimestamp(interfaceName, interfacePath string, value interface{}, timestamp time.Time) error {
-	// Get the interface from the introspection
-	iface, ok := d.interfaces[interfaceName]
+	iface, ok := d.interfaces.Get(interfaceName)
 	if ok {
 		if iface.Aggregation != interfaces.IndividualAggregation {
 			return fmt.Errorf("interface %s hasn't individual aggregation", interfaceName)
@@ -304,8 +304,7 @@ func (d *Device) SendIndividualMessage(interfaceName, path string, value interfa
 // Example: if dealing with an aggregate interface with endpoints [/my/aggregate/firstValue, /my/aggregate/secondValue],
 // interfacePath would be "/my/aggregate", and values would be map["firstValue": <value>, "secondValue": <value>]
 func (d *Device) SendAggregateMessageWithTimestamp(interfaceName, interfacePath string, values map[string]interface{}, timestamp time.Time) error {
-	// Get the interface from the introspection
-	iface, ok := d.interfaces[interfaceName]
+	iface, ok := d.interfaces.Get(interfaceName)
 	if ok {
 		if iface.Aggregation != interfaces.ObjectAggregation {
 			return fmt.Errorf("interface %s hasn't object aggregation", iface.Name)
@@ -340,8 +339,7 @@ func (d *Device) SendAggregateMessage(interfaceName, interfacePath string, value
 // using `GetProperty` or `GetAllProperties`.
 // This call can be blocking if the channel is full (see `MaxInflightMessages`).
 func (d *Device) SetProperty(interfaceName, path string, value interface{}) error {
-	// Get the interface from the introspection
-	iface, ok := d.interfaces[interfaceName]
+	iface, ok := d.interfaces.Get(interfaceName)
 	if ok {
 		if iface.Type != interfaces.PropertiesType {
 			return fmt.Errorf("SetProperty can be used only on Property Interfaces, used on %s instead", interfaceName)
@@ -369,8 +367,7 @@ func (d *Device) SetProperty(interfaceName, path string, value interface{}) erro
 // is deleted, it is also removed from the local cache.
 // This call can be blocking if the channel is full (see `MaxInflightMessages`).
 func (d *Device) UnsetProperty(interfaceName, path string) error {
-	// Get the interface from the introspection
-	iface, ok := d.interfaces[interfaceName]
+	iface, ok := d.interfaces.Get(interfaceName)
 	if ok {
 		if iface.Type != interfaces.PropertiesType {
 			return fmt.Errorf("UnsetProperty can be used only on Property Interfaces, used on %s instead", interfaceName)
@@ -511,9 +508,10 @@ func (d *Device) publishMessage(message astarteMessageInfo) {
 				// if message.storageId == 0, then the message never was in our db
 			}
 			// if it's a property, we need to set it or delete it
-			if d.interfaces[message.InterfaceName].Type == interfaces.PropertiesType {
+			iface, _ := d.interfaces.Get(message.InterfaceName)
+			if iface.Type == interfaces.PropertiesType {
 				if len(message.Payload) > 0 {
-					go d.storeProperty(message.InterfaceName, message.Path, d.interfaces[message.InterfaceName].MajorVersion, message.Payload)
+					go d.storeProperty(message.InterfaceName, message.Path, iface.MajorVersion, message.Payload)
 				} else {
 					go d.removePropertyFromStorage(message.InterfaceName, message.Path, message.InterfaceMajor)
 				}
@@ -548,9 +546,9 @@ func (d *Device) setupSubscriptions() error {
 	subscriptions := map[string]byte{
 		fmt.Sprintf("%s/control/consumer/properties", d.getBaseTopic()): 2,
 	}
-	for _, i := range d.interfaces {
-		if i.Ownership == interfaces.ServerOwnership {
-			subscriptions[fmt.Sprintf("%s/%s/#", d.getBaseTopic(), i.Name)] = 2
+	for e := range d.interfaces.IterBuffered() {
+		if e.Val.Ownership == interfaces.ServerOwnership {
+			subscriptions[fmt.Sprintf("%s/%s/#", d.getBaseTopic(), e.Val.Name)] = 2
 		}
 	}
 
@@ -571,8 +569,8 @@ func (d *Device) generateDeviceIntrospection() string {
 	// Set up the introspection
 	entries := []string{}
 
-	for _, i := range d.interfaces {
-		entries = append(entries, fmt.Sprintf("%s:%d:%d", i.Name, i.MajorVersion, i.MinorVersion))
+	for i := range d.interfaces.IterBuffered() {
+		entries = append(entries, fmt.Sprintf("%s:%d:%d", i.Val.Name, i.Val.MajorVersion, i.Val.MinorVersion))
 	}
 	sort.Strings(entries)
 
@@ -614,7 +612,13 @@ func (d *Device) sendDeviceProperties() error {
 
 	// Check if property is device-owned
 	for _, property := range properties {
-		if d.interfaces[property.InterfaceName].Ownership == interfaces.DeviceOwnership {
+		iface, ok := d.interfaces.Get(property.InterfaceName)
+		// TODO decide how to handle this case
+		if !ok {
+			fmt.Printf("Property interface %s was found in database, but not in device introspection", property.InterfaceName)
+		}
+
+		if iface.Ownership == interfaces.DeviceOwnership {
 			// if so, set up publish
 			topic := fmt.Sprintf("%s/%s%s", d.getBaseTopic(), property.InterfaceName, property.Path)
 			// And just DO IT

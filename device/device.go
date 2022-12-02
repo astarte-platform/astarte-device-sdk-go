@@ -28,6 +28,7 @@ import (
 	"github.com/astarte-platform/astarte-go/misc"
 	backoff "github.com/cenkalti/backoff/v4"
 	mqtt "github.com/ispirata/paho.mqtt.golang"
+	cmap "github.com/orcaman/concurrent-map/v2"
 	"gorm.io/gorm"
 )
 
@@ -45,7 +46,7 @@ type Device struct {
 	deviceID                    string
 	realm                       string
 	m                           mqtt.Client
-	interfaces                  map[string]interfaces.AstarteInterface
+	interfaces                  cmap.ConcurrentMap[string, interfaces.AstarteInterface]
 	astarteAPIClient            *client.Client
 	brokerURL                   string
 	db                          *gorm.DB
@@ -106,7 +107,7 @@ func newDevice(deviceID, realm, credentialsSecret, pairingBaseURL string, opts D
 	d := new(Device)
 	d.deviceID = deviceID
 	d.realm = realm
-	d.interfaces = map[string]interfaces.AstarteInterface{}
+	d.interfaces = cmap.New[interfaces.AstarteInterface]()
 	d.opts = opts
 
 	if len(opts.CryptoDir) == 0 {
@@ -170,7 +171,7 @@ func (d *Device) Connect(result chan<- error) {
 		}
 
 		// At least one interface available?
-		if len(d.interfaces) == 0 {
+		if d.interfaces.Count() == 0 {
 			if result != nil {
 				result <- errors.New("add at least an interface before attempting to connect")
 			}
@@ -287,13 +288,70 @@ func (d *Device) IsConnected() bool {
 // AddInterface adds an interface to the device. The interface must be loaded with ParseInterface
 // from the astarte-go/interfaces package, which also ensures that the interface is valid.
 // The return value should be ignored as the error is always `nil` (i.e. AddInterface cannot fail).
-// TODO since the function always returns nil, do not return an error (target release 1.0)
+// TODO since the function always returns nil, do not return an error (target release 1.0).
+// It is NOT safe to use this function to update device introspection at runtime.
+//
+// Deprecated: since this function does not send the updated introspection to Astarte,
+// it will be removed in the future (target: 1.0).
 func (d *Device) AddInterface(astarteInterface interfaces.AstarteInterface) error {
-	d.interfaces[astarteInterface.Name] = astarteInterface
+	d.interfaces.Set(astarteInterface.Name, astarteInterface)
 	return nil
 }
 
-// RemoveInterface removes an interface from the device
+// SafeAddInterface adds an interface to the device. The interface must be loaded with ParseInterface
+// from the astarte-go/interfaces package, which also ensures that the interface is valid.
+// It is safe to use this function to update device introspection at runtime.
+// This will be the only way to add an interface in the future (target: 1.0).
+func (d *Device) SafeAddInterface(astarteInterface interfaces.AstarteInterface) error {
+	d.interfaces.Set(astarteInterface.Name, astarteInterface)
+	if d.IsConnected() {
+		return d.sendIntrospection(d.generateDeviceIntrospection())
+	}
+	return nil
+}
+
+// SafeRemoveInterface removes an interface from the device.
+// It is NOT safe to use this function to update device introspection at runtime.
+//
+// Deprecated: since this function does not send the updated introspection to Astarte,
+// it will be removed in the future (target: 1.0).
 func (d *Device) RemoveInterface(astarteInterface interfaces.AstarteInterface) {
-	delete(d.interfaces, astarteInterface.Name)
+	d.interfaces.Remove(astarteInterface.Name)
+}
+
+// RemoveInterface removes an interface from the device.
+// It is safe to use this function to update device introspection at runtime.
+// This will be the only way to remove an interface in the future (target: 1.0).
+func (d *Device) SafeRemoveInterface(astarteInterface interfaces.AstarteInterface) error {
+	d.interfaces.Remove(astarteInterface.Name)
+
+	if !d.IsConnected() {
+		return nil
+	}
+
+	if err := d.sendIntrospection(d.generateDeviceIntrospection()); err != nil {
+		return err
+	}
+
+	d.removePropertyFromStorageForAllMajorsAndPaths(astarteInterface.Name)
+
+	if err := d.maybeUnsubscribeFromInterface(astarteInterface); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *Device) maybeUnsubscribeFromInterface(astarteInterface interfaces.AstarteInterface) error {
+	if astarteInterface.Ownership != interfaces.ServerOwnership {
+		return nil
+	}
+
+	interfaceTopic := fmt.Sprintf("%s/%s/%s/#", d.realm, d.deviceID, astarteInterface.Name)
+	t := d.m.Unsubscribe(interfaceTopic)
+	if t.Wait(); t.Error() != nil {
+		return t.Error()
+	}
+
+	return nil
 }

@@ -384,7 +384,7 @@ func loadInterfaces(d *device.Device, interfaceDirectory string) error {
 		if iface, err = interfaces.ParseInterfaceFromFile(interfaceDirectory + "/" + f.Name()); err != nil {
 			return err
 		}
-		if err = d.AddInterface(iface); err != nil {
+		if err = d.SafeAddInterface(iface); err != nil {
 			return err
 		}
 	}
