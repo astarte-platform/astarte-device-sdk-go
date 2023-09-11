@@ -61,8 +61,13 @@ func (d *Device) initializeMQTTClient() error {
 	})
 
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
-		// If connection is lost, we should stop dequeuing messages from the channel
-		d.inflightMessages.Lock()
+		// Check d.opts.AutoReconnect in order not to lock twice.
+		if !d.opts.AutoReconnect {
+			// When connection is lost, we should stop dequeuing messages from the channel.
+			// If we're not autoreconnecting, lock here rather than during reconnection
+			// because reconnection will never happen.
+			d.inflightMessages.Lock()
+		}
 		if d.OnErrors != nil {
 			d.OnErrors(d, err)
 		}
@@ -204,6 +209,12 @@ func (d *Device) handleControlMessages(message string, payload []byte) error {
 }
 
 func astarteOnConnectHandler(d *Device, sessionPresent bool) {
+	// Check d.opts.AutoReconnect in order not to lock twice.
+	if d.opts.AutoReconnect {
+		// When connection is lost, we should stop dequeuing messages from the channel.
+		// This will guarantee that messages are dequeued only after introspection is sent.
+		d.inflightMessages.Lock()
+	}
 	// Generate Introspection first
 	introspection := d.generateDeviceIntrospection()
 
@@ -259,7 +270,7 @@ func astarteOnConnectHandler(d *Device, sessionPresent bool) {
 		}
 	}
 
-	// Since control messages have been sent, we allow to send data
+	// Since control messages have been sent, we allow to send data once again.
 	d.inflightMessages.Unlock()
 
 	// If some messages must be retried, do so
@@ -394,10 +405,14 @@ func (d *Device) UnsetProperty(interfaceName, path string) error {
 // The main publishing loop: retrieves messages from the publishing channel and sends them one at a time, in order
 func (d *Device) sendLoop() {
 	for {
-		d.inflightMessages.Lock()
-		d.publishMessage(<-d.inflightMessages.queue)
-		d.inflightMessages.Unlock()
+		d.publishInflightMessage()
 	}
+}
+
+func (d *Device) publishInflightMessage() {
+	d.inflightMessages.Lock()
+	defer d.inflightMessages.Unlock()
+	d.publishMessage(<-d.inflightMessages.queue)
 }
 
 func (d *Device) hasAlreadySentPropertyValue(interfaceName, path string, newValue interface{}) bool {
