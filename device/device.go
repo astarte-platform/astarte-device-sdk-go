@@ -49,7 +49,7 @@ type Device struct {
 	astarteAPIClient            *client.Client
 	brokerURL                   string
 	db                          *gorm.DB
-	inflightMessages            messageQueue
+	inflightMessages            *messageQueue
 	isSendingStoredMessages     bool
 	volatileMessages            []astarteMessageInfo
 	lastSentIntrospection       string
@@ -212,6 +212,10 @@ func (d *Device) Connect(result chan<- error) {
 			return
 		}
 
+		// Now that the client is up and running, we can start sending messages
+		value := messageQueue{queue: make(chan astarteMessageInfo, d.opts.MaxInflightMessages)}
+		d.inflightMessages = &value
+
 		// initialize the client
 		if err = d.initializeMQTTClient(); err != nil {
 			if result != nil {
@@ -237,12 +241,6 @@ func (d *Device) Connect(result chan<- error) {
 			return
 		}
 
-		// Now that the client is up and running, we can start sending messages
-		d.inflightMessages.queue = make(chan astarteMessageInfo, d.opts.MaxInflightMessages)
-		// When initialized, mutexes are unlocked (see https://pkg.go.dev/sync#Mutex),
-		// so we lock it in order to allow publishing messages
-		// only if introspection has already been sent
-		d.inflightMessages.Lock()
 		go d.sendLoop()
 
 		// All good: notify, and our routine is over.
