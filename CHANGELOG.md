@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+## Added
+- Introduce the `KeepAlive` device option to configure the MQTT connection keepalive. Default to 30s,
+  which was the value used before.
+
 ## [0.90.2] - 2022-07-04
 ## Added
 - Introduce the `DeviceOptions` struct to expose all possible configuration options for the device.
